@@ -62,9 +62,13 @@ const STATUS_CLASS: Record<Status, string> = {
 };
 
 const shortStage = (s: string) =>
-  s.replace("Innmeldt", "Registrert internt").replace("Klar for bestilling", "Klar").replace("Sendt Entelios", "Sendt").replace("Satt opp i Cloud", "Cloud");
+  displayStatus(s).replace("Sendt Entelios", "Sendt").replace("Satt opp i Cloud", "Cloud");
 
-const displayStatus = (s: string) => s === "Innmeldt" ? "Registrert internt" : s;
+const displayStatus = (s: string) => {
+  if (s === "Innmeldt") return "Registrert internt";
+  if (s === "Klar for bestilling") return "Klar til Entelios";
+  return s;
+};
 
 type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
@@ -167,6 +171,12 @@ export default function StromflytPage() {
     finally { setLoading(false); }
   }
   function flash(m: string) { setToast(m); window.setTimeout(() => setToast(""), 2400); }
+
+  async function stromflytAuthHeaders(): Promise<HeadersInit> {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
 
   async function signIn(e: FormEvent) {
     e.preventDefault();
@@ -286,7 +296,7 @@ export default function StromflytPage() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const res = await fetch("/api/avtale/parse", { method: "POST", body });
+      const res = await fetch("/api/avtale/parse", { method: "POST", body, headers: await stromflytAuthHeaders() });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese avtalen");
       const result = data as ParsedAvtale & { ok: true };
@@ -356,7 +366,7 @@ export default function StromflytPage() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const res = await fetch("/api/excel/parse", { method: "POST", body });
+      const res = await fetch("/api/excel/parse", { method: "POST", body, headers: await stromflytAuthHeaders() });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese Excel-filen");
       const workbook = data as ParsedExcelWorkbook & { ok: true };
@@ -609,19 +619,19 @@ export default function StromflytPage() {
   async function markSelectedReady() {
     const ids = selectedRegisteredIds;
     if (!ids.length) { flash("Velg poster med status Registrert internt"); return; }
-    if (!window.confirm(`Sette ${ids.length} valgte målepunkt som «Klar for bestilling»?`)) return;
+    if (!window.confirm(`Sette ${ids.length} valgte målepunkt som «Klar til Entelios»?`)) return;
     try {
       await updateStatuses(ids, "Klar for bestilling", "Innmeldt");
       setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
       await refresh();
-      flash(`${ids.length} målepunkt satt som klare for bestilling`);
+      flash(`${ids.length} målepunkt satt som klare til Entelios`);
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
   function copyBatch() {
     const header = ENTELIOS_COLUMNS.map((c) => c.label).join("\t");
     const lines = batchRows.map((r) => ENTELIOS_COLUMNS.map((c) => String((r as any)[c.key] ?? "")).join("\t"));
     const tsv = [header, ...lines].join("\n");
-    navigator.clipboard?.writeText(tsv).then(() => flash("Bestilling kopiert (lim inn i regneark/mail)"), () => flash("Kunne ikke kopiere"));
+    navigator.clipboard?.writeText(tsv).then(() => flash("Entelios-grunnlag kopiert"), () => flash("Kunne ikke kopiere"));
   }
 
   function downloadWorklist() {
@@ -698,8 +708,8 @@ export default function StromflytPage() {
         <nav className="tabs" role="tablist">
           <button role="tab" aria-selected={tab === "reg"} onClick={() => setTab("reg")}>Register</button>
           <button role="tab" aria-selected={tab === "form"} onClick={newManualEntry}>Ny registrering</button>
-          <button role="tab" aria-selected={tab === "import"} onClick={() => setTab("import")}>Last opp avtale</button>
-          <button role="tab" aria-selected={tab === "excel"} onClick={() => setTab("excel")}>Importer Excel</button>
+          <button role="tab" aria-selected={tab === "import"} onClick={() => setTab("import")}>Last opp PDF-avtale</button>
+          <button role="tab" aria-selected={tab === "excel"} onClick={() => setTab("excel")}>Importer målepunktliste</button>
         </nav>
         <div className="right">
           {requireAuth && <span className="user-email">{userEmail}</span>}
@@ -714,11 +724,15 @@ export default function StromflytPage() {
 
         {tab === "reg" && (
           <section>
+            <div className="pilot-note">
+              <b>Strømflyt samler strømregistreringer ett sted.</b> Målepunkter kan komme fra manuell registrering, signert PDF-avtale eller Excel-liste. Etter kontroll klargjøres de for Entelios og følges videre til bekreftelse og Cloud/drift.
+            </div>
+
             <div className="tiles">
               <Tile k="Målepunkt totalt" v={String(tiles.total)} />
               <Tile k="Rute A / B" v={`${tiles.a} / ${tiles.b}`} sub="leietaker / strømsalg" />
               <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
-              <Tile k="Trenger handling" v={String(tiles.trenger)} sub="registrert + klar" alert={tiles.trenger > 0} />
+              <Tile k="Trenger handling" v={String(tiles.trenger)} sub="registrert + klar til Entelios" alert={tiles.trenger > 0} />
             </div>
 
             <div className="panel">
@@ -766,16 +780,16 @@ export default function StromflytPage() {
                 </select>
               </label>
               <button className="btn" disabled={!filtered.length} onClick={downloadWorklist}>Last ned arbeidsliste</button>
-              <button className="btn primary" onClick={() => setBatchOpen(true)}>Lag Entelios-batch</button>
+              <button className="btn primary" onClick={() => setBatchOpen(true)}>Klargjør sending til Entelios</button>
             </div>
 
             {selectedRowsForBulk.length > 0 && <div className="bulk-bar">
               <b>{selectedRowsForBulk.length} valgt</b>
-              <span>{selectedRegisteredIds.length} kan settes som klare for bestilling</span>
+              <span>{selectedRegisteredIds.length} kan settes som klare til Entelios</span>
               <span className="grow" />
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm primary" disabled={!selectedRegisteredIds.length} onClick={markSelectedReady}>
-                Sett {selectedRegisteredIds.length || "valgte"} som klar
+                Sett {selectedRegisteredIds.length || "valgte"} som klar til Entelios
               </button>
             </div>}
 
@@ -838,8 +852,8 @@ export default function StromflytPage() {
               onDrop={(e) => dropFile(e, "pdf")}
             >
               <div>
-                <h2>Last opp signert avtale</h2>
-                <p><b>Dra PDF-avtalen hit</b>, eller velg den fra filer. Systemet leser kunde, org.nr, vilkår, oppstart og alle målepunkt. Du kontrollerer funnene før de lagres.</p>
+                <h2>Last opp signert PDF-avtale</h2>
+                <p><b>Dra PDF-avtalen hit</b>, eller velg den fra filer. Systemet leser kunde, org.nr, vilkår, oppstart og målepunkter. Du kontrollerer forslagene før de lagres i registeret.</p>
               </div>
               <label className="upload-btn">
                 <input
@@ -865,10 +879,10 @@ export default function StromflytPage() {
                     <Summary k="Signatur" v={parsed.avtale_signert ? "Fullført i PandaDoc" : "Ikke bekreftet"} good={parsed.avtale_signert} bad={!parsed.avtale_signert} />
                   </div>
                   <div className="import-org">
-                    <label>Organisasjon i Adaptic Cloud</label>
+                    <label>Kunde/organisasjon for strømregistreringen</label>
                     <input list="cloud-org-list" value={importCloudOrg} onChange={(e) => setImportCloudOrg(e.target.value)} />
                     <datalist id="cloud-org-list">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
-                    <span>{parsed.rute === "B" ? "Rene strømsalg legges normalt i Strømkunder." : "Kontroller hvilken kundeorganisasjon bygget tilhører."}</span>
+                    <span>{parsed.rute === "B" ? "Rene strømsalg legges normalt under Strømkunder." : "Kontroller hvilken kundeorganisasjon bygget tilhører."}</span>
                   </div>
                   <div className="import-org">
                     <label>Selger for kunden</label>
@@ -917,8 +931,8 @@ export default function StromflytPage() {
               onDrop={(e) => dropFile(e, "excel")}
             >
               <div>
-                <h2>Importer målerliste fra Excel</h2>
-                <p><b>Dra Excel-filen hit</b>, eller velg den fra filer. Systemet finner faner og kolonner automatisk, kontrollerer radene og foreslår status ut fra om fanen er «Bestilt».</p>
+                <h2>Importer målepunktliste fra Excel</h2>
+                <p><b>Dra Excel-filen hit</b>, eller velg den fra filer. Systemet finner faner og kolonner automatisk, kontrollerer radene og foreslår hva som kan legges i registeret.</p>
               </div>
               <label className="upload-btn">
                 <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={excelParsing || excelImporting} onChange={(e) => parseExcel(e.target.files?.[0])} />
@@ -946,7 +960,7 @@ export default function StromflytPage() {
                   <div className="hd"><h2>Avtaleinformasjon per referanse</h2><span className="sub">Fyll bare det Excel-filen ikke inneholder</span></div>
                   <div className="tablewrap mapping-table">
                     <table>
-                      <thead><tr><th>Referanse / kunde</th><th>Org.nr</th><th>Selger</th><th>Cloud-org</th><th>Rute</th><th>Kommersielt</th><th>Signert</th><th>Kontroll</th></tr></thead>
+                      <thead><tr><th>Referanse / kunde</th><th>Org.nr</th><th>Selger</th><th>Strøm-org</th><th>Rute</th><th>Kommersielt</th><th>Signert</th><th>Kontroll</th></tr></thead>
                       <tbody>{excelGroupKeys.map((key) => {
                         const m = excelMappings[key];
                         if (!m) return null;
@@ -1006,9 +1020,9 @@ export default function StromflytPage() {
               <Field label="Selger" hint="Gjelder hele kunden. Endring oppdaterer alle kundens målepunkter.">
                 <input value={form.selger ?? ""} onChange={(e) => set("selger", e.target.value)} placeholder="Navn på ansvarlig selger" />
               </Field>
-              <Field label="Organisasjon i Adaptic Cloud" req err={errFor("cloud_org")} hint="Hentes fra Cloud så navnet matcher eksakt.">
+              <Field label="Kunde/organisasjon for strømregistreringen" req err={errFor("cloud_org")} hint="Velg bare relevant strøm-/kundeorganisasjon. Ikke hele Cloud-listen skal inn her.">
                 <select value={form.cloud_org ?? ""} onChange={(e) => set("cloud_org", e.target.value)}>
-                  <option value="">velg org</option>
+                  <option value="">velg relevant org</option>
                   {CLOUD_ORGS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               </Field>
@@ -1115,7 +1129,7 @@ export default function StromflytPage() {
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setBatchOpen(false); }}>
           <div className="modal" role="dialog" aria-modal="true">
             <div className="hd">
-              <h2>Entelios-bestilling</h2>
+              <h2>Klargjør sending til Entelios</h2>
               <span className="sub" style={{ color: "var(--sf-ink-3)", fontSize: 13 }}>{batchRows.length} målepunkt klare</span>
               <span style={{ flex: 1 }} />
               <button className="btn sm" disabled={!batchRows.length} onClick={copyBatch}>Kopier</button>
@@ -1124,7 +1138,7 @@ export default function StromflytPage() {
             </div>
             <div className="bd">
               {batchRows.length === 0 ? (
-                <div className="empty">Ingen målepunkt har status «Klar for bestilling». Sett en internt registrert post videre først.</div>
+                <div className="empty">Ingen målepunkt har status «Klar til Entelios». Sett en internt registrert post videre først.</div>
               ) : (
                 <div className="tablewrap" style={{ boxShadow: "none" }}>
                   <table>
@@ -1214,6 +1228,7 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .auth-root{display:grid;place-items:center;padding:24px}.login-card{width:min(430px,100%);background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:14px;padding:28px;box-shadow:0 18px 60px rgba(15,25,45,.1);display:flex;flex-direction:column;gap:14px}.login-card h1{font-size:23px}.login-card p{color:var(--sf-ink-2);margin:4px 0 0}.login-card .field{margin-top:0}.login-card .banner{margin:0}
 .banner{background:var(--sf-crit-soft);color:var(--sf-crit);border:1px solid var(--sf-crit);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:14px}
 .import-page{width:100%;max-width:none}
+.pilot-note{margin-bottom:18px;padding:12px 14px;border:1px solid var(--sf-border);border-left:4px solid var(--sf-accent);border-radius:8px;background:var(--sf-surface);color:var(--sf-ink-2);font-size:14px}.pilot-note b{color:var(--sf-ink)}
 .upload-card{display:flex;align-items:center;justify-content:space-between;gap:24px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:12px;padding:22px 24px;margin-bottom:20px}
 .upload-card h2{font-size:19px}.upload-card p{margin:5px 0 0;color:var(--sf-ink-2);max-width:720px}
 .drop-zone{transition:border-color .15s,background .15s,box-shadow .15s}.drop-zone.dragging{border:2px dashed var(--sf-accent);background:var(--sf-accent-soft);box-shadow:0 0 0 4px color-mix(in srgb,var(--sf-accent) 12%,transparent)}

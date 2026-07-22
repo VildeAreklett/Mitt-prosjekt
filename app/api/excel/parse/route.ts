@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
+import { requireStromflytAccess } from "../../../../lib/server-auth";
 import { parseExcelWorkbook } from "../../../../lib/excel-parser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const auth = await requireStromflytAccess(req);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
+  }
+
   try {
     const form = await req.formData();
     const file = form.get("file");

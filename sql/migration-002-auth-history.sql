@@ -3,10 +3,6 @@
 -- 2) Gir innloggede brukere tilgang.
 -- 3) Logger opprettelse, endringer, statusbytter og sletting automatisk.
 
--- Selger lagres på alle målepunkt for kunden, og plattformen holder dem i synk.
-alter table public.strombestillinger
-  add column if not exists selger text not null default '';
-
 alter table public.strombestillinger enable row level security;
 
 drop policy if exists "anon full access" on public.strombestillinger;
