@@ -10,6 +10,12 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
+    const authType = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("type");
+    if (authType === "invite" || authType === "recovery") {
+      // Supabase-klienten kan rydde tokenet fra adressen når neste side
+      // starter. Behold derfor en ufarlig markør som sikrer passordsteget.
+      window.sessionStorage.setItem("stromflyt_pending_password", authType);
+    }
     router.replace("/stromflyt" + window.location.hash);
   }, [router]);
 

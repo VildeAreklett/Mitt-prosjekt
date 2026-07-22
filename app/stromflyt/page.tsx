@@ -126,6 +126,7 @@ export default function StromflytPage() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
+  const [passwordContext, setPasswordContext] = useState<"invite" | "account">("invite");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -136,8 +137,9 @@ export default function StromflytPage() {
 
   useEffect(() => {
     const authType = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("type");
-    const isInvite = authType === "invite" || authType === "recovery";
-    if (isInvite) { setNeedsPassword(true); setAuthLoading(true); }
+    const pendingPassword = window.sessionStorage.getItem("stromflyt_pending_password");
+    const isInvite = authType === "invite" || authType === "recovery" || pendingPassword === "invite" || pendingPassword === "recovery";
+    if (isInvite) { setPasswordContext("invite"); setNeedsPassword(true); setAuthLoading(true); }
     if (!requireAuth && !isInvite) { refresh(); return; }
     supabase.auth.getSession().then(({ data }) => {
       setUserEmail(data.session?.user.email || null);
@@ -188,6 +190,7 @@ export default function StromflytPage() {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setAuthLoading(false);
     if (error) { setPasswordError("Kunne ikke lagre passordet. Be om en ny invitasjon."); return; }
+    window.sessionStorage.removeItem("stromflyt_pending_password");
     window.history.replaceState({}, document.title, "/stromflyt");
     setNeedsPassword(false);
     flash("Passord lagret. Du er nå logget inn.");
@@ -657,11 +660,12 @@ export default function StromflytPage() {
       <style>{CSS}</style>
       <form className="login-card" onSubmit={finishInvitation}>
         <span className="spark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor" /></svg></span>
-        <div><h1>Velg passord</h1><p>Invitasjonen er godkjent. Opprett passordet du skal bruke i Strømflyt.</p></div>
+        <div><h1>{passwordContext === "invite" ? "Velg passord" : "Sett nytt passord"}</h1><p>{passwordContext === "invite" ? "Invitasjonen er godkjent. Opprett passordet du skal bruke i Strømflyt." : "Opprett et nytt passord for Strømflyt-kontoen din."}</p></div>
         <Field label="Nytt passord"><input type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></Field>
         <Field label="Gjenta passord"><input type="password" autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></Field>
         {passwordError && <div className="banner">{passwordError}</div>}
         <button className="btn primary" disabled={authLoading}>{authLoading ? "Lagrer …" : "Lagre passord"}</button>
+        {passwordContext === "account" && <button className="btn" type="button" onClick={() => setNeedsPassword(false)}>Avbryt</button>}
       </form>
     </div>;
   }
@@ -700,6 +704,7 @@ export default function StromflytPage() {
         <div className="right">
           {requireAuth && <span className="user-email">{userEmail}</span>}
           <button className="btn sm" onClick={refresh}>Oppdater</button>
+          {requireAuth && <button className="btn sm" onClick={() => { setPasswordContext("account"); setNewPassword(""); setConfirmPassword(""); setPasswordError(""); setNeedsPassword(true); }}>Sett passord</button>}
           {requireAuth && <button className="btn sm" onClick={signOut}>Logg ut</button>}
         </div>
       </header>
