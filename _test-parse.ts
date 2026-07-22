@@ -1,0 +1,12 @@
+import { extractText, getDocumentProxy } from "unpdf";
+import { parseAvtale } from "./lib/avtale-parser";
+import { readFileSync } from "fs";
+const buf = new Uint8Array(readFileSync(process.env.HOME + "/Downloads/Bergensgruppen - Strømavtale Adaptic Spot Næring.pdf"));
+const pdf = await getDocumentProxy(buf);
+const { text } = await extractText(pdf, { mergePages: true });
+const t = Array.isArray(text) ? text.join("\n") : text;
+const p = parseAvtale(t);
+console.log("kunde:", p.kunde, "| org:", p.org_nr, "| rute:", p.rute, "| påslag:", p.paslag_ore_kwh, "| fast/måler:", p.fast_pr_maaler, "| oppstart:", p.avtalt_oppstart, "| signert:", p.avtale_signert);
+console.log("målepunkt:", p.rows.length);
+for (const r of p.rows) console.log("  ", r.adresse, "|", r.maalepunkt_id, "|", r.aarsforbruk_kwh, "kWh |", r.gyldig ? "gyldig" : "FLAGG: " + r.problem);
+if (p.note) console.log("note:", p.note);
