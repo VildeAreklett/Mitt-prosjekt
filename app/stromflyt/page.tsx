@@ -91,7 +91,7 @@ const emptyForm: Partial<Malepunkt> = {
 
 export default function StromflytPage() {
   const requireAuth = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
-  const [tab, setTab] = useState<"reg" | "form" | "import" | "excel">("reg");
+  const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel">("reg");
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -706,7 +706,8 @@ export default function StromflytPage() {
           <div>Strømflyt<small>Adaptic · innmelding og register</small></div>
         </div>
         <nav className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === "reg"} onClick={() => setTab("reg")}>Register</button>
+          <button role="tab" aria-selected={tab === "reg"} onClick={() => setTab("reg")}>Arbeidsliste</button>
+          <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Oversikt</button>
           <button role="tab" aria-selected={tab === "form"} onClick={newManualEntry}>Ny registrering</button>
           <button role="tab" aria-selected={tab === "import"} onClick={() => setTab("import")}>Last opp PDF-avtale</button>
           <button role="tab" aria-selected={tab === "excel"} onClick={() => setTab("excel")}>Importer målepunktliste</button>
@@ -722,21 +723,22 @@ export default function StromflytPage() {
       <main>
         {err && <div className="banner">Kunne ikke laste registeret: {err}</div>}
 
-        {tab === "reg" && (
-          <section>
-            <div className="pilot-note">
-              <b>Strømflyt samler strømregistreringer ett sted.</b> Målepunkter kan komme fra manuell registrering, signert PDF-avtale eller Excel-liste. Etter kontroll klargjøres de for Entelios og følges videre til bekreftelse og Cloud/drift.
+        {tab === "overview" && (
+          <section className="overview-page">
+            <div className="page-heading">
+              <div><h1>Oversikt</h1><span>Status for alle registrerte målepunkt</span></div>
+              <button className="btn" onClick={refresh}>Oppdater oversikt</button>
             </div>
 
             <div className="tiles">
               <Tile k="Målepunkt totalt" v={String(tiles.total)} />
               <Tile k="Rute A / B" v={`${tiles.a} / ${tiles.b}`} sub="leietaker / strømsalg" />
               <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
-              <Tile k="Trenger handling" v={String(tiles.trenger)} sub="registrert + klar til Entelios" alert={tiles.trenger > 0} />
+              <Tile k="Trenger behandling" v={String(tiles.trenger)} sub="før sending til Entelios" alert={tiles.trenger > 0} />
             </div>
 
             <div className="panel">
-              <div className="hd"><h2>Statuslinje</h2><span className="sub">antall målepunkt per steg</span></div>
+              <div className="hd"><h2>Statusløp</h2><span className="sub">antall målepunkt per steg</span></div>
               <div className="pipe">
                 {STAGES.map((st) => (
                   <div className="pstage" key={st}>
@@ -747,6 +749,22 @@ export default function StromflytPage() {
               </div>
             </div>
 
+            <div className="overview-section-heading">
+              <div><h2>Arbeidskøer</h2><span>Velg en kø for å åpne den i arbeidslisten</span></div>
+            </div>
+            <div className="overview-queues">
+              {WORK_FILTERS.filter((f) => f.key).map((f) => {
+                const count = rows.filter((r) => f.statuses.includes(r.status)).length;
+                return <button key={f.key} onClick={() => { setWorkFilter(f.key); setFltStatus(""); setTab("reg"); }}>
+                  <span>{f.label}</span><b className="num">{count}</b><small>Åpne arbeidsliste →</small>
+                </button>;
+              })}
+            </div>
+          </section>
+        )}
+
+        {tab === "reg" && (
+          <section>
             <div className="work-queues" aria-label="Arbeidslister">
               {WORK_FILTERS.map((f) => {
                 const count = f.statuses.length ? rows.filter((r) => f.statuses.includes(r.status)).length : rows.length;
@@ -1228,7 +1246,9 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .auth-root{display:grid;place-items:center;padding:24px}.login-card{width:min(430px,100%);background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:14px;padding:28px;box-shadow:0 18px 60px rgba(15,25,45,.1);display:flex;flex-direction:column;gap:14px}.login-card h1{font-size:23px}.login-card p{color:var(--sf-ink-2);margin:4px 0 0}.login-card .field{margin-top:0}.login-card .banner{margin:0}
 .banner{background:var(--sf-crit-soft);color:var(--sf-crit);border:1px solid var(--sf-crit);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:14px}
 .import-page{width:100%;max-width:none}
-.pilot-note{margin-bottom:18px;padding:12px 14px;border:1px solid var(--sf-border);border-left:4px solid var(--sf-accent);border-radius:8px;background:var(--sf-surface);color:var(--sf-ink-2);font-size:14px}.pilot-note b{color:var(--sf-ink)}
+.page-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.page-heading h1{font-size:24px;letter-spacing:-.02em}.page-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
+.overview-section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin:4px 0 12px}.overview-section-heading h2{font-size:16px}.overview-section-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
+.overview-queues{display:grid;grid-template-columns:repeat(5,minmax(170px,1fr));gap:12px}.overview-queues button{font:inherit;text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:16px;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}.overview-queues button:hover{border-color:var(--sf-accent);box-shadow:0 4px 18px rgba(26,34,48,.06)}.overview-queues button span{font-weight:580}.overview-queues button b{grid-row:1/3;grid-column:2;font-size:24px;color:var(--sf-ink)}.overview-queues button small{font-size:12px;color:var(--sf-accent)}
 .upload-card{display:flex;align-items:center;justify-content:space-between;gap:24px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:12px;padding:22px 24px;margin-bottom:20px}
 .upload-card h2{font-size:19px}.upload-card p{margin:5px 0 0;color:var(--sf-ink-2);max-width:720px}
 .drop-zone{transition:border-color .15s,background .15s,box-shadow .15s}.drop-zone.dragging{border:2px dashed var(--sf-accent);background:var(--sf-accent-soft);box-shadow:0 0 0 4px color-mix(in srgb,var(--sf-accent) 12%,transparent)}
@@ -1318,6 +1338,7 @@ td .muted{color:var(--sf-ink-3)}
 .history-modal{max-width:680px}.history-event{display:grid;grid-template-columns:14px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--sf-border)}.history-event:last-child{border-bottom:0}.history-dot{width:9px;height:9px;border-radius:50%;background:var(--sf-accent);margin-top:7px}.history-event b{font-size:14px}.history-event small{display:block;color:var(--sf-ink-3);margin-top:3px}.history-event .muted{font-size:13px;color:var(--sf-ink-2)}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-ink);color:var(--sf-ground);padding:10px 18px;border-radius:999px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.upload-card{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
+@media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}}
+@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading{align-items:flex-start}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.upload-card{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 `;
