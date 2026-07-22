@@ -832,7 +832,7 @@ export default function StromflytPage() {
                 </tr></thead>
                 <tbody>
                   {loading && <tr><td colSpan={12}><div className="empty">Laster …</div></td></tr>}
-                  {!loading && filtered.length === 0 && <tr><td colSpan={12}><div className="empty">Ingen målepunkt matcher filteret.</div></td></tr>}
+                  {!loading && filtered.length === 0 && <tr><td colSpan={12}><div className="empty"><b>Ingen målepunkt her</b><span>Juster søk eller filter, eller registrer et nytt målepunkt eller last opp en avtale.</span></div></td></tr>}
                   {!loading && filtered.map((r) => {
                     const next = nextStatus(r.status);
                     const previous = previousStatus(r.status);
@@ -841,7 +841,7 @@ export default function StromflytPage() {
                         <td className="select-cell"><input type="checkbox" aria-label={`Velg ${r.bygg}`} checked={selectedIds.includes(r.id)} onChange={(e) => toggleSelected(r.id, e.target.checked)} /></td>
                         <td>{r.kunde}</td>
                         <td>{r.selger || <span className="muted">Ikke satt</span>}</td>
-                        <td>{r.bygg}<div className="muted">{r.adresse}</div></td>
+                        <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>
                         <td className="num">{r.maalepunkt_id}</td>
                         <td>{r.netteier}</td>
                         <td>{r.prisomrade}</td>
@@ -1353,8 +1353,8 @@ td .muted{color:var(--sf-ink-3)}
 .brand{background:linear-gradient(155deg,#1a3a53,var(--sf-navy))}
 .tabs button{transition:background .15s,color .15s}
 .tabs button[aria-selected=true]{font-weight:600}
-.tile{border-radius:13px;padding:16px 18px;box-shadow:var(--sf-shadow);transition:box-shadow .18s,transform .18s}
-.tile .v{font-size:29px;letter-spacing:-.03em}
+.tile{border-radius:13px;padding:19px 21px;box-shadow:var(--sf-shadow);transition:box-shadow .18s,transform .18s}
+.tile .v{font-size:33px;letter-spacing:-.03em;margin-top:5px}
 .panel,.work-toolbar,.tablewrap,.upload-card,.import-summary{border-radius:13px;box-shadow:var(--sf-shadow)}
 .overview-queues button,.work-queues button{border-radius:12px;box-shadow:var(--sf-shadow);transition:border-color .15s,box-shadow .18s,transform .18s}
 .overview-queues button:hover,.work-queues button:hover{transform:translateY(-1px);box-shadow:var(--sf-shadow-md)}
@@ -1363,7 +1363,7 @@ td .muted{color:var(--sf-ink-3)}
 .btn.primary{background:linear-gradient(180deg,var(--sf-accent),var(--sf-accent-strong));border-color:var(--sf-accent-strong);box-shadow:0 1px 2px rgba(0,60,55,.25),0 6px 16px color-mix(in srgb,var(--sf-accent) 28%,transparent)}
 .btn.primary:hover{filter:none;box-shadow:0 2px 5px rgba(0,60,55,.3),0 10px 24px color-mix(in srgb,var(--sf-accent) 36%,transparent)}
 .sf-root th{background:var(--sf-surface);border-bottom:1px solid var(--sf-border-strong)}
-.sf-root td{padding-top:13px;padding-bottom:13px}
+.sf-root td{padding-top:10px;padding-bottom:10px}
 .sf-root th:first-child,.sf-root td:first-child{padding-left:18px}
 .sf-root th:last-child,.sf-root td:last-child{padding-right:18px}
 .sf-root tbody tr{transition:background .12s}
@@ -1371,4 +1371,9 @@ td .muted{color:var(--sf-ink-3)}
 .rute{padding:3px 8px;letter-spacing:.02em}
 .login-card{box-shadow:var(--sf-shadow-md),0 40px 90px rgba(16,32,45,.1)}
 .modal{box-shadow:0 30px 80px rgba(10,18,30,.4)}
+.action-select{font-weight:500;color:var(--sf-ink-2);border-color:var(--sf-border)}
+.action-select:hover{border-color:var(--sf-border-strong);color:var(--sf-ink)}
+.empty{display:flex;flex-direction:column;align-items:center;gap:4px;padding:48px 20px}
+.empty b{font-size:15px;color:var(--sf-ink);font-weight:600}
+.empty span{font-size:13px;color:var(--sf-ink-3)}
 `;
