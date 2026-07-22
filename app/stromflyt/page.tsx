@@ -70,6 +70,12 @@ const displayStatus = (s: string) => {
   return s;
 };
 
+const displayNameFromEmail = (email: string | null) => {
+  if (!email) return "Profil";
+  return email.split("@")[0].split(/[._-]+/).filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+};
+
 type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
@@ -134,6 +140,7 @@ export default function StromflytPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<Malepunkt | null>(null);
   const [historyRows, setHistoryRows] = useState<HistoryEvent[]>([]);
@@ -187,6 +194,7 @@ export default function StromflytPage() {
   }
 
   async function signOut() {
+    setProfileOpen(false);
     await supabase.auth.signOut();
     setUserEmail(null);
   }
@@ -713,10 +721,23 @@ export default function StromflytPage() {
           <button role="tab" aria-selected={tab === "excel"} onClick={() => setTab("excel")}>Importer målepunktliste</button>
         </nav>
         <div className="right">
-          {requireAuth && <span className="user-email">{userEmail}</span>}
           <button className="btn sm" onClick={refresh}>Oppdater</button>
-          {requireAuth && <button className="btn sm" onClick={() => { setPasswordContext("account"); setNewPassword(""); setConfirmPassword(""); setPasswordError(""); setNeedsPassword(true); }}>Sett passord</button>}
-          {requireAuth && <button className="btn sm" onClick={signOut}>Logg ut</button>}
+          {requireAuth && <div className="profile-menu-wrap">
+            <button className="profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
+              <span className="profile-avatar" aria-hidden="true">{displayNameFromEmail(userEmail).charAt(0)}</span>
+              <span>{displayNameFromEmail(userEmail)}</span>
+              <span className="profile-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {profileOpen && <div className="profile-menu" role="menu">
+              <div className="profile-identity">
+                <span>Innlogget som</span>
+                <b>{displayNameFromEmail(userEmail)}</b>
+                <small>{userEmail}</small>
+              </div>
+              <button role="menuitem" onClick={() => { setProfileOpen(false); setPasswordContext("account"); setNewPassword(""); setConfirmPassword(""); setPasswordError(""); setNeedsPassword(true); }}>Endre passord</button>
+              <button role="menuitem" className="profile-logout" onClick={signOut}>Logg ut</button>
+            </div>}
+          </div>}
         </div>
       </header>
 
@@ -737,20 +758,8 @@ export default function StromflytPage() {
               <Tile k="Trenger behandling" v={String(tiles.trenger)} sub="før sending til Entelios" alert={tiles.trenger > 0} />
             </div>
 
-            <div className="panel">
-              <div className="hd"><h2>Statusløp</h2><span className="sub">antall målepunkt per steg</span></div>
-              <div className="pipe">
-                {STAGES.map((st) => (
-                  <div className="pstage" key={st}>
-                    <div className="pc num">{rows.filter((r) => r.status === st).length}</div>
-                    <div className="pl">{displayStatus(st)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div className="overview-section-heading">
-              <div><h2>Arbeidskøer</h2><span>Velg en kø for å åpne den i arbeidslisten</span></div>
+              <div><h2>Status og arbeidskøer</h2><span>Velg en kø for å åpne den i arbeidslisten</span></div>
             </div>
             <div className="overview-queues">
               {WORK_FILTERS.filter((f) => f.key).map((f) => {
@@ -1241,7 +1250,7 @@ const CSS = `
 .tabs button:hover{color:var(--sf-ink);background:var(--sf-surface-2)}
 .tabs button[aria-selected=true]{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .bar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
-.user-email{font-size:12px;color:var(--sf-ink-3);max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.profile-menu-wrap{position:relative}.profile-trigger{font:inherit;display:flex;align-items:center;gap:8px;padding:4px 9px 4px 5px;border:1px solid var(--sf-border-strong);border-radius:9px;background:var(--sf-surface);color:var(--sf-ink);font-size:13px;font-weight:570;cursor:pointer}.profile-trigger:hover,.profile-trigger[aria-expanded=true]{border-color:var(--sf-accent);background:var(--sf-accent-soft)}.profile-avatar{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--sf-accent);color:var(--sf-accent-ink);font-size:12px;font-weight:700}.profile-chevron{color:var(--sf-ink-3);font-size:14px}.profile-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:240px;padding:7px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:11px;box-shadow:0 14px 40px rgba(15,25,45,.14)}.profile-identity{padding:9px 10px 12px;border-bottom:1px solid var(--sf-border);margin-bottom:5px}.profile-identity span,.profile-identity small{display:block;color:var(--sf-ink-3);font-size:11.5px}.profile-identity b{display:block;margin:2px 0 1px;font-size:14px}.profile-menu>button{font:inherit;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:var(--sf-ink);text-align:left;font-size:13px;cursor:pointer}.profile-menu>button:hover{background:var(--sf-surface-2)}.profile-menu>button.profile-logout{color:var(--sf-crit)}
 main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .auth-root{display:grid;place-items:center;padding:24px}.login-card{width:min(430px,100%);background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:14px;padding:28px;box-shadow:0 18px 60px rgba(15,25,45,.1);display:flex;flex-direction:column;gap:14px}.login-card h1{font-size:23px}.login-card p{color:var(--sf-ink-2);margin:4px 0 0}.login-card .field{margin-top:0}.login-card .banner{margin:0}
 .banner{background:var(--sf-crit-soft);color:var(--sf-crit);border:1px solid var(--sf-crit);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:14px}
@@ -1268,12 +1277,6 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .panel>.hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--sf-border)}
 .panel>.hd h2{font-size:15px;font-weight:620}
 .panel>.hd .sub{color:var(--sf-ink-3);font-size:13px}
-.pipe{display:flex;gap:6px;padding:16px 18px;overflow-x:auto}
-.pstage{flex:1 0 120px;min-width:120px;border:1px solid var(--sf-border);border-radius:8px;padding:10px 12px;background:var(--sf-surface-2);position:relative}
-.pstage .pc{font-size:22px;font-weight:680;letter-spacing:-.02em}
-.pstage .pl{font-size:12px;color:var(--sf-ink-2);margin-top:2px}
-.pstage::after{content:"›";position:absolute;right:-8px;top:50%;transform:translateY(-50%);color:var(--sf-ink-3);font-size:18px;z-index:2}
-.pstage:last-child::after{display:none}
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px}
 .toolbar .grow{flex:1}
 .bulk-bar{display:flex;align-items:center;gap:12px;margin:-2px 0 14px;padding:10px 12px;border:1px solid var(--sf-accent);border-radius:9px;background:var(--sf-accent-soft);color:var(--sf-accent)}.bulk-bar span{font-size:13px;color:var(--sf-ink-2)}.bulk-bar .grow{flex:1}
