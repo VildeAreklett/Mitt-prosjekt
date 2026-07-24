@@ -128,16 +128,26 @@ export function fmt(n: number | null | undefined): string {
   return Number(n).toLocaleString("nb-NO");
 }
 
-// Kolonner Entelios trenger, jf. stages/03/references/entelios-bestillingsformat.md
+// Kolonner i selve Entelios-filen (vedlegget til innmeldingsmailen).
+// Kunde/org.nr er IKKE en kolonne her - det er én fast setning i mailteksten
+// ("Alle anleggene på excl.lista skal registreres på ..."), jf. ENTELIOS_MAIL under.
 export const ENTELIOS_COLUMNS: { key: keyof Malepunkt; label: string }[] = [
-  { key: "kunde", label: "Selskapsnavn" },
-  { key: "org_nr", label: "Org.nr" },
+  { key: "at_kode", label: "Referansekode" },
   { key: "adresse", label: "Adresse" },
   { key: "maalenummer", label: "Målenummer" },
   { key: "maalepunkt_id", label: "MålepunktID" },
-  { key: "netteier", label: "Netteier" },
   { key: "prisomrade", label: "Prisområde" },
+  { key: "netteier", label: "Netteier" },
   { key: "aarsforbruk_kwh", label: "Årsforbruk (kWh)" },
   { key: "avtalt_oppstart", label: "Oppstartdato" },
-  { key: "at_kode", label: "Referansekode" },
+  { key: "kommentar", label: "Kommentar" },
 ];
+
+// Fram til Entelios-integrasjonen er på plass sendes bestillinger på mail.
+// Mottaker/kopi og kunde nr er faste - kun listen med målere og fritekst varierer.
+export const ENTELIOS_MAIL = {
+  to: "inger.brit.christensen@entelios.com",
+  cc: ["aksel.eckbo@entelios.com", "eirik.torsvik@adaptic.no"],
+  subject: "Innmelding av målere",
+  kundenrLinje: "Alle anleggene på excl.lista skal registreres på;\nkunde nr 734301 Adaptic Technology AS, org.nr 927167778",
+};

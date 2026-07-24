@@ -5,6 +5,7 @@
 // og env-variablene NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.
 
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
+import ExcelJS from "exceljs";
 import {
   STAGES,
   CLOUD_ORGS,
@@ -16,6 +17,7 @@ import {
   previousStatus,
   fmt,
   ENTELIOS_COLUMNS,
+  ENTELIOS_MAIL,
   type Malepunkt,
   type Status,
   type Rute,
@@ -642,6 +644,64 @@ export default function StromflytPage() {
     navigator.clipboard?.writeText(tsv).then(() => flash("Entelios-grunnlag kopiert"), () => flash("Kunne ikke kopiere"));
   }
 
+  // Frem til vi har en Entelios-API-integrasjon sendes bestillinger på mail:
+  // last ned vedlegget her, så åpne et ferdig utfylt mailutkast (bruker sender selv).
+  const NORSKE_MANEDER = ["januar", "februar", "mars", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "desember"];
+
+  async function downloadEntelioBatchXlsx() {
+    if (!batchRows.length) return;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Bestilling");
+    ws.addRow(ENTELIOS_COLUMNS.map((c) => c.label));
+    batchRows.forEach((r) => ws.addRow(ENTELIOS_COLUMNS.map((c) => (r as any)[c.key] ?? "")));
+    ws.getRow(1).font = { bold: true };
+    ws.columns.forEach((col) => { col.width = 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    const now = new Date();
+    const navn = `Adaptic - Bestilling ${NORSKE_MANEDER[now.getMonth()]} ${now.getFullYear()}.xlsx`;
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = navn;
+    link.click();
+    URL.revokeObjectURL(url);
+    flash(`Lastet ned ${navn} (${batchRows.length} målepunkt)`);
+  }
+
+  function openEntelioEmailDraft() {
+    if (!batchRows.length) return;
+    const grupper = new Map<string, number>();
+    batchRows.forEach((r) => {
+      const key = r.avtalt_oppstart || "ukjent oppstart";
+      grupper.set(key, (grupper.get(key) || 0) + 1);
+    });
+    const oppstartLinje = [...grupper.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dato, antall]) => `${dato} (${antall} målere)`)
+      .join(", ");
+    const body = [
+      "Hei Inger Brit,",
+      "",
+      "Vi har samlet opp flere nye målere vi ønsker å få meldt inn.",
+      "",
+      "Vedlagt finner dere oversikt over alle nye målere med referansekode, overtagelsesdato og historikk.",
+      `Ønsket overtakelse: ${oppstartLinje}.`,
+      "[Rediger her ved behov, f.eks. om noen målere mangler historikk eller har alternativ overtakelsesdato.]",
+      "",
+      ENTELIOS_MAIL.kundenrLinje,
+      "",
+      "Bare ta kontakt om du har noen spørsmål!",
+    ].join("\n");
+    const params = new URLSearchParams({
+      subject: ENTELIOS_MAIL.subject,
+      cc: ENTELIOS_MAIL.cc.join(","),
+      body,
+    });
+    window.location.href = `mailto:${ENTELIOS_MAIL.to}?${params.toString()}`;
+    flash("Mailutkast åpnet - husk å legge ved den nedlastede Excel-filen før du sender");
+  }
+
   function downloadWorklist() {
     const columns: { label: string; value: (r: Malepunkt) => string }[] = [
       { label: "Kunde", value: (r) => r.kunde },
@@ -1163,7 +1223,9 @@ export default function StromflytPage() {
               <span className="sub" style={{ color: "var(--sf-ink-3)", fontSize: 13 }}>{batchRows.length} målepunkt klare</span>
               <span style={{ flex: 1 }} />
               <button className="btn sm" disabled={!batchRows.length} onClick={copyBatch}>Kopier</button>
-              <button className="btn sm" disabled={!batchRows.length} onClick={sendBatch}>Marker som sendt</button>
+              <button className="btn sm" disabled={!batchRows.length} onClick={downloadEntelioBatchXlsx}>Last ned Excel</button>
+              <button className="btn sm" disabled={!batchRows.length} onClick={openEntelioEmailDraft}>Åpne mailutkast</button>
+              <button className="btn sm primary" disabled={!batchRows.length} onClick={sendBatch}>Marker som sendt</button>
               <button className="icon-btn" aria-label="Lukk" onClick={() => setBatchOpen(false)}>✕</button>
             </div>
             <div className="bd">
