@@ -149,16 +149,39 @@ export default function StromflytPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
-    const authType = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("type");
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const searchParams = new URLSearchParams(window.location.search);
+    const authType = hashParams.get("type") || searchParams.get("type");
+    const code = searchParams.get("code");
     const pendingPassword = window.sessionStorage.getItem("stromflyt_pending_password");
-    const isInvite = authType === "invite" || authType === "recovery" || pendingPassword === "invite" || pendingPassword === "recovery";
+    const isInvite =
+      authType === "invite" || authType === "recovery" ||
+      pendingPassword === "invite" || pendingPassword === "recovery" || !!code;
     if (isInvite) { setPasswordContext("invite"); setNeedsPassword(true); setAuthLoading(true); }
-    if (!requireAuth && !isInvite) { refresh(); return; }
-    supabase.auth.getSession().then(({ data }) => {
+
+    async function establishSession() {
+      // Nyere Supabase-prosjekter sender invitasjons-/gjenopprettingslenker som
+      // ?code=... (PKCE), ikke #access_token=...&type=invite i fragmentet. Uten
+      // denne utvekslingen blir koden aldri brukt, og brukeren havner rett på
+      // vanlig innlogging med kontoen fortsatt uverifisert.
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        window.history.replaceState({}, document.title, "/stromflyt");
+        if (error) {
+          setPasswordError("Lenken er ugyldig eller utløpt. Be om en ny invitasjon.");
+          setNeedsPassword(true);
+          setAuthLoading(false);
+          return;
+        }
+      }
+      if (!requireAuth && !isInvite) { refresh(); return; }
+      const { data } = await supabase.auth.getSession();
       setUserEmail(data.session?.user.email || null);
       setAuthLoading(false);
       if (data.session) refresh();
-    });
+    }
+    establishSession();
+
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user.email || null);
       setAuthLoading(false);
