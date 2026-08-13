@@ -957,15 +957,6 @@ export default function StromflytPage() {
 
         {tab === "reg" && (
           <section>
-            <div className="work-queues" aria-label="Arbeidslister">
-              {WORK_FILTERS.map((f) => {
-                const count = f.statuses.length ? rows.filter((r) => f.statuses.includes(r.status)).length : rows.length;
-                return <button key={f.key || "all"} className={workFilter === f.key ? "active" : ""} onClick={() => { setWorkFilter(f.key); setFltStatus(""); }}>
-                  <span>{f.label}</span><b className="num">{count}</b>
-                </button>;
-              })}
-            </div>
-
             <div className="worklist-heading">
               <div><h1>Arbeidsliste</h1><span>{filtered.length} målepunkt i valgt kø</span></div>
               <button className="btn primary" onClick={() => setBatchOpen(true)}>Klargjør sending til Entelios</button>
