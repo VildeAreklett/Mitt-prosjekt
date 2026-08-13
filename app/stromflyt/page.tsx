@@ -143,6 +143,9 @@ export default function StromflytPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [nyOpen, setNyOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<Malepunkt | null>(null);
   const [historyRows, setHistoryRows] = useState<HistoryEvent[]>([]);
@@ -263,6 +266,16 @@ export default function StromflytPage() {
       return stage || (a.avtalt_oppstart || "9999").localeCompare(b.avtalt_oppstart || "9999");
     });
   }, [rows, fltRute, fltStatus, workFilter, search, sortKey]);
+
+  // Globalt søk i toppen: finner et målepunkt uansett hvilken visning man står
+  // i, i motsetning til søkefeltet i arbeidslisten som bare filtrerer der.
+  const globalMatches = useMemo(() => {
+    const q = globalSearch.trim().toLowerCase();
+    if (!q) return [];
+    return rows
+      .filter((r) => [r.kunde, r.selger, r.bygg, r.adresse, r.maalepunkt_id, r.maalenummer, r.at_kode, r.netteier].join(" ").toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [rows, globalSearch]);
   const batchRows = useMemo(() => rows.filter((r) => r.status === "Klar for bestilling"), [rows]);
   const selectedRowsForBulk = useMemo(() => rows.filter((r) => selectedIds.includes(r.id)), [rows, selectedIds]);
   const selectedRegisteredIds = useMemo(
@@ -789,41 +802,128 @@ export default function StromflytPage() {
     <div className="sf-root">
       <style>{CSS}</style>
 
-      <header className="bar">
-        <div className="brand">
-          <span className="spark" aria-hidden="true">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor" /></svg>
-          </span>
-          <div>Strømflyt<small>Adaptic · innmelding og register</small></div>
-        </div>
-        <nav className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === "reg"} onClick={() => setTab("reg")}>Arbeidsliste</button>
-          <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Oversikt</button>
-          <button role="tab" aria-selected={tab === "form"} onClick={newManualEntry}>Ny registrering</button>
-          <button role="tab" aria-selected={tab === "import"} onClick={() => setTab("import")}>Last opp PDF-avtale</button>
-          <button role="tab" aria-selected={tab === "excel"} onClick={() => setTab("excel")}>Importer målepunktliste</button>
-        </nav>
-        <div className="right">
-          <button className="btn sm" onClick={refresh}>Oppdater</button>
-          {requireAuth && <div className="profile-menu-wrap">
-            <button className="profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
-              <span className="profile-avatar" aria-hidden="true">{displayNameFromEmail(userEmail).charAt(0)}</span>
-              <span>{displayNameFromEmail(userEmail)}</span>
-              <span className="profile-chevron" aria-hidden="true">⌄</span>
-            </button>
-            {profileOpen && <div className="profile-menu" role="menu">
-              <div className="profile-identity">
-                <span>Innlogget som</span>
-                <b>{displayNameFromEmail(userEmail)}</b>
-                <small>{userEmail}</small>
-              </div>
-              <button role="menuitem" onClick={() => { setProfileOpen(false); setPasswordContext("account"); setNewPassword(""); setConfirmPassword(""); setPasswordError(""); setNeedsPassword(true); }}>Endre passord</button>
-              <button role="menuitem" className="profile-logout" onClick={signOut}>Logg ut</button>
-            </div>}
-          </div>}
-        </div>
-      </header>
+      <div className="app-shell">
+        <header className="topbar">
+          <div className="brand-panel">
+            <span className="spark" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor" /></svg>
+            </span>
+            <div>
+              <h1>Strømflyt</h1>
+              <p>ADAPTIC · INNMELDING OG REGISTER</p>
+            </div>
+          </div>
 
+          {/* Globalt søk. Arbeidslistens eget søk finner bare i den køen man
+              står i akkurat da; dette finner et målepunkt uansett hvor det
+              ligger, og hopper rett til arbeidslisten med treffet forhåndsfylt. */}
+          <div className="globalsok">
+            <div className="globalsok-felt">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input
+                type="search"
+                placeholder="Søk kunde, adresse, MålepunktID, AT-kode …"
+                value={globalSearch}
+                onChange={(e) => { setGlobalSearch(e.target.value); setGlobalSearchOpen(true); }}
+                onFocus={() => setGlobalSearchOpen(true)}
+              />
+            </div>
+            {globalSearchOpen && globalSearch.trim() && (
+              <>
+                <div className="dropdown-backdrop" onClick={() => setGlobalSearchOpen(false)} />
+                <div className="globalsok-treff">
+                  {globalMatches.length === 0 && <div className="globalsok-tom">Ingen treff</div>}
+                  {globalMatches.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => {
+                        setSearch(globalSearch.trim());
+                        setTab("reg");
+                        setWorkFilter("");
+                        setFltStatus("");
+                        setGlobalSearchOpen(false);
+                        setGlobalSearch("");
+                      }}
+                    >
+                      <span className="globalsok-tittel">{r.kunde || "Uten kunde"} · {r.bygg}</span>
+                      <span className="globalsok-under"><span>{r.adresse}</span><span className="num">{r.maalepunkt_id}</span><span>{displayStatus(r.status)}</span></span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="top-actions">
+            <div className="ny-meny">
+              <button className="ny-knapp" aria-haspopup="menu" aria-expanded={nyOpen} onClick={() => setNyOpen((open) => !open)}>+ Ny</button>
+              {nyOpen && (
+                <>
+                  <div className="dropdown-backdrop" onClick={() => setNyOpen(false)} />
+                  <div className="ny-panel" role="menu">
+                    <button role="menuitem" onClick={() => { setTab("import"); setNyOpen(false); }}>
+                      <span className="ny-tittel">Last opp PDF-avtale</span>
+                      <span className="ny-hint">Les beløp og datoer rett ut av signert avtale</span>
+                    </button>
+                    <button role="menuitem" onClick={() => { newManualEntry(); setNyOpen(false); }}>
+                      <span className="ny-tittel">Ny registrering</span>
+                      <span className="ny-hint">Legg inn et målepunkt for hånd</span>
+                    </button>
+                    <button role="menuitem" onClick={() => { setTab("excel"); setNyOpen(false); }}>
+                      <span className="ny-tittel">Importer målepunktliste</span>
+                      <span className="ny-hint">Les inn hele arbeidsboken på nytt</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            <button className="icon-btn" onClick={refresh} title="Oppdater data" aria-label="Oppdater data">↻</button>
+            {requireAuth && <div className="profile-menu-wrap">
+              <button className="profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
+                <span className="profile-avatar" aria-hidden="true">{displayNameFromEmail(userEmail).charAt(0)}</span>
+                <span>{displayNameFromEmail(userEmail)}</span>
+                <span className="profile-chevron" aria-hidden="true">⌄</span>
+              </button>
+              {profileOpen && (
+                <>
+                  <div className="dropdown-backdrop" onClick={() => setProfileOpen(false)} />
+                  <div className="profile-menu" role="menu">
+                    <div className="profile-identity">
+                      <span>Innlogget som</span>
+                      <b>{displayNameFromEmail(userEmail)}</b>
+                      <small>{userEmail}</small>
+                    </div>
+                    <button role="menuitem" onClick={() => { setProfileOpen(false); setPasswordContext("account"); setNewPassword(""); setConfirmPassword(""); setPasswordError(""); setNeedsPassword(true); }}>Endre passord</button>
+                    <button role="menuitem" className="profile-logout" onClick={signOut}>Logg ut</button>
+                  </div>
+                </>
+              )}
+            </div>}
+          </div>
+        </header>
+
+        <div className="app-body">
+          <nav className="sidenav" aria-label="Hovedmeny">
+            <div className="sidenav-merke">VISNINGER</div>
+            <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+              <span>Oversikt</span>
+            </button>
+            {WORK_FILTERS.map((f) => {
+              const count = f.statuses.length ? rows.filter((r) => f.statuses.includes(r.status)).length : rows.length;
+              const active = tab === "reg" && workFilter === f.key;
+              return (
+                <button key={f.key || "all"} className={active ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(f.key); setFltStatus(""); }}>
+                  <span>{f.key === "" ? "Arbeidsliste" : f.label}</span>
+                  {count > 0 && <span className={`sidenav-tall${f.key === "handling" ? " varsel" : ""}`}>{count}</span>}
+                </button>
+              );
+            })}
+            <div className="sidenav-fot">
+              Registeret erstatter strømavtale-Excel-arket. Fram til Entelios-integrasjonen er på plass sendes bestillinger på mail.
+            </div>
+          </nav>
+
+          <div className="content-shell">
       <main>
         {err && <div className="banner">Kunne ikke laste registeret: {err}</div>}
 
@@ -1237,6 +1337,9 @@ export default function StromflytPage() {
           </form>
         )}
       </main>
+          </div>
+        </div>
+      </div>
 
       {batchOpen && (
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setBatchOpen(false); }}>
@@ -1329,15 +1432,56 @@ const CSS = `
 .sf-root *{box-sizing:border-box}
 .sf-root .num{font-variant-numeric:tabular-nums;font-family:var(--sf-mono)}
 .sf-root h1,.sf-root h2{margin:0;text-wrap:balance}
-.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;min-height:64px;padding:0 22px 0 0;background:var(--sf-surface);border-bottom:1px solid var(--sf-border)}
-.brand{align-self:stretch;display:flex;align-items:center;gap:10px;padding:0 22px;background:var(--sf-navy);color:#fff;font-weight:640}
-.brand small{display:block;font-weight:480;color:#9eacb8;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase}
+/* ---- Skall: mørk topplinje i full bredde + sidemeny ----
+   Fanene lå vannrett i toppen og gikk tom for bredde. Sidemenyen har rom for
+   antall pr. visning og frigjør toppen til det som gjelder hele appen: søk,
+   "+ Ny" og profil — samme kromspråk som fakturakontroll-plattformen. */
+.app-shell{min-height:100vh;display:grid;grid-template-rows:auto 1fr}
+.topbar{position:sticky;top:0;z-index:20;min-height:64px;background:var(--sf-navy);display:grid;grid-template-columns:260px minmax(0,1fr) auto;align-items:center;gap:16px;padding-right:16px;box-shadow:0 1px 0 rgba(0,0,0,.15),0 2px 14px rgba(16,32,45,.18)}
+.brand-panel{color:#fff;display:flex;align-items:center;gap:10px;padding:0 22px;min-width:0}
+.brand-panel h1{margin:0;font-size:16px;line-height:1.15;white-space:nowrap;font-weight:640}
+.brand-panel p{margin:2px 0 0;color:#93a5ba;font-size:11px;letter-spacing:.06em;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spark{width:26px;height:26px;border-radius:7px;background:var(--sf-accent);display:grid;place-items:center;color:var(--sf-accent-ink);flex:none}
-.tabs{display:flex;gap:4px;margin-left:8px;overflow-x:auto;white-space:nowrap}
-.tabs button{font:inherit;font-size:14px;font-weight:550;color:var(--sf-ink-2);background:transparent;border:1px solid transparent;padding:7px 14px;border-radius:8px;cursor:pointer}
-.tabs button:hover{color:var(--sf-ink);background:var(--sf-surface-2)}
-.tabs button[aria-selected=true]{color:var(--sf-accent);background:var(--sf-accent-soft)}
-.bar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.globalsok{position:relative;justify-self:center;width:min(480px,100%)}
+.globalsok-felt{display:flex;align-items:center;gap:9px;background:rgba(255,255,255,.09);border:1px solid transparent;border-radius:9px;padding:0 12px;height:38px}
+.globalsok-felt:focus-within{border-color:var(--sf-accent)}
+.globalsok-felt svg{flex:none;color:#93a5ba}
+.globalsok-felt input{flex:1;min-width:0;height:36px;border:none;background:transparent;color:#fff;font-size:13.5px;padding:0}
+.globalsok-felt input::placeholder{color:#7d8fa5}
+.globalsok-felt input:focus{outline:none;box-shadow:none}
+.globalsok-treff{position:absolute;top:46px;left:0;right:0;z-index:45;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:12px;box-shadow:0 14px 44px rgba(15,25,45,.22);padding:6px;max-height:60vh;overflow-y:auto}
+.globalsok-treff>button{width:100%;border:1px solid transparent;background:transparent;text-align:left;color:var(--sf-ink);padding:8px 10px;height:auto;display:grid;gap:2px;border-radius:7px;cursor:pointer;font:inherit}
+.globalsok-treff>button:hover{background:var(--sf-surface-2)}
+.globalsok-tittel{font-weight:620;font-size:13.5px}
+.globalsok-under{color:var(--sf-ink-3);font-size:12px;display:flex;gap:8px;flex-wrap:wrap}
+.globalsok-tom{color:var(--sf-ink-3);font-size:13px;padding:10px}
+.dropdown-backdrop{position:fixed;inset:0;z-index:40;background:transparent}
+.top-actions{display:flex;align-items:center;gap:8px;justify-self:end}
+.top-actions .icon-btn{background:transparent;border:1px solid transparent;color:#b9c7d6}
+.top-actions .icon-btn:hover{background:rgba(255,255,255,.09);color:#fff}
+.ny-meny{position:relative}
+.ny-knapp{font:inherit;height:36px;padding:0 14px;border-radius:9px;font-weight:650;background:var(--sf-accent);color:var(--sf-accent-ink);border:1px solid transparent;white-space:nowrap;cursor:pointer}
+.ny-knapp:hover{filter:brightness(1.06)}
+.ny-knapp[aria-expanded=true]{box-shadow:0 0 0 3px color-mix(in srgb,var(--sf-accent) 28%,transparent)}
+.ny-panel{position:absolute;top:46px;right:0;z-index:41;width:280px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:12px;box-shadow:0 12px 40px rgba(15,25,45,.16);padding:8px;display:flex;flex-direction:column;gap:2px}
+.ny-panel>button{font:inherit;border:1px solid transparent;background:transparent;text-align:left;color:var(--sf-ink);padding:9px 10px;display:grid;gap:1px;height:auto;border-radius:7px;cursor:pointer}
+.ny-panel>button:hover{background:var(--sf-surface-2)}
+.ny-tittel{font-weight:650}
+.ny-hint{font-size:12px;color:var(--sf-ink-3);font-weight:400;line-height:1.35}
+.topbar .profile-trigger{border-color:rgba(255,255,255,.16);background:transparent;color:#fff}
+.topbar .profile-trigger:hover,.topbar .profile-trigger[aria-expanded=true]{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.3)}
+.topbar .profile-chevron{color:#93a5ba}
+.app-body{display:grid;grid-template-columns:240px minmax(0,1fr);align-items:start}
+.sidenav{position:sticky;top:64px;align-self:start;min-height:calc(100vh - 64px);background:var(--sf-surface);border-right:1px solid var(--sf-border);padding:16px 12px 24px;display:flex;flex-direction:column;gap:2px}
+.sidenav-merke{color:var(--sf-ink-3);font-size:10.5px;font-weight:700;letter-spacing:.09em;padding:10px 10px 6px}
+.sidenav button{font:inherit;border:1px solid transparent;background:transparent;color:var(--sf-ink-2);height:38px;padding:0 10px;justify-content:flex-start;display:flex;align-items:center;gap:8px;width:100%;font-weight:550;border-radius:8px;cursor:pointer}
+.sidenav button:hover{background:var(--sf-surface-2)}
+.sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
+.sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:var(--sf-surface-2);color:var(--sf-ink-2);border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
+.sidenav button.active .sidenav-tall{background:var(--sf-accent);color:var(--sf-accent-ink)}
+.sidenav-tall.varsel{background:var(--sf-warn-soft);color:var(--sf-warn)}
+.sidenav-fot{margin-top:auto;color:var(--sf-ink-3);font-size:11.5px;line-height:1.45;padding:14px 10px 0;border-top:1px solid var(--sf-border)}
+.content-shell{width:100%;min-width:0;padding:26px 28px 80px}
 .profile-menu-wrap{position:relative}.profile-trigger{font:inherit;display:flex;align-items:center;gap:8px;padding:4px 9px 4px 5px;border:1px solid var(--sf-border-strong);border-radius:9px;background:var(--sf-surface);color:var(--sf-ink);font-size:13px;font-weight:570;cursor:pointer}.profile-trigger:hover,.profile-trigger[aria-expanded=true]{border-color:var(--sf-accent);background:var(--sf-accent-soft)}.profile-avatar{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--sf-accent);color:var(--sf-accent-ink);font-size:12px;font-weight:700}.profile-chevron{color:var(--sf-ink-3);font-size:14px}.profile-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:240px;padding:7px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:11px;box-shadow:0 14px 40px rgba(15,25,45,.14)}.profile-identity{padding:9px 10px 12px;border-bottom:1px solid var(--sf-border);margin-bottom:5px}.profile-identity span,.profile-identity small{display:block;color:var(--sf-ink-3);font-size:11.5px}.profile-identity b{display:block;margin:2px 0 1px;font-size:14px}.profile-menu>button{font:inherit;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:var(--sf-ink);text-align:left;font-size:13px;cursor:pointer}.profile-menu>button:hover{background:var(--sf-surface-2)}.profile-menu>button.profile-logout{color:var(--sf-crit)}
 main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .auth-root{display:grid;place-items:center;padding:24px}.login-card{width:min(430px,100%);background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:14px;padding:28px;box-shadow:0 18px 60px rgba(15,25,45,.1);display:flex;flex-direction:column;gap:14px}.login-card h1{font-size:23px}.login-card p{color:var(--sf-ink-2);margin:4px 0 0}.login-card .field{margin-top:0}.login-card .banner{margin:0}
@@ -1430,14 +1574,18 @@ td .muted{color:var(--sf-ink-3)}
 .history-modal{max-width:680px}.history-event{display:grid;grid-template-columns:14px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--sf-border)}.history-event:last-child{border-bottom:0}.history-dot{width:9px;height:9px;border-radius:50%;background:var(--sf-accent);margin-top:7px}.history-event b{font-size:14px}.history-event small{display:block;color:var(--sf-ink-3);margin-top:3px}.history-event .muted{font-size:13px;color:var(--sf-ink-2)}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-ink);color:var(--sf-ground);padding:10px 18px;border-radius:999px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-@media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}.brand small{display:none}.tabs button{padding-inline:10px}}
-@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading,.worklist-heading{align-items:flex-start}.bar{flex-wrap:wrap;padding:0 12px 10px}.brand{height:58px;margin-left:-12px;padding-inline:16px}.bar .right{margin-left:auto}.tabs{order:3;width:100%;margin-left:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.upload-card{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
+@media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}.brand-panel p{display:none}.topbar{grid-template-columns:auto minmax(0,1fr) auto}}
+@media (max-width:900px){
+  .app-body{grid-template-columns:1fr}
+  .sidenav{position:static;min-height:auto;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid var(--sf-border);padding:10px 12px}
+  .sidenav-merke,.sidenav-fot{display:none}
+  .sidenav button{width:auto;white-space:nowrap}
+}
+@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.upload-card{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 /* premium polish */
-.bar{box-shadow:0 1px 0 var(--sf-border),0 2px 14px rgba(16,32,45,.04);z-index:30}
-.brand{background:linear-gradient(155deg,#1a3a53,var(--sf-navy))}
-.tabs button{transition:background .15s,color .15s}
-.tabs button[aria-selected=true]{font-weight:600}
+.topbar{box-shadow:0 1px 0 rgba(0,0,0,.15),0 2px 14px rgba(16,32,45,.18);z-index:30}
+.brand-panel{background:linear-gradient(155deg,#1a3a53,var(--sf-navy));margin:-1px 0;align-self:stretch}
 .tile{border-radius:13px;padding:19px 21px;box-shadow:var(--sf-shadow);transition:box-shadow .18s,transform .18s}
 .tile .v{font-size:33px;letter-spacing:-.03em;margin-top:5px}
 .panel,.work-toolbar,.tablewrap,.upload-card,.import-summary{border-radius:13px;box-shadow:var(--sf-shadow)}
