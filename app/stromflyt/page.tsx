@@ -1173,10 +1173,12 @@ export default function StromflytPage() {
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
               onDrop={(e) => dropFile(e, "pdf")}
             >
-              <div>
-                <h2>Last opp signert PDF-avtale</h2>
-                <p><b>Dra PDF-avtalen hit</b>, eller velg den fra filer. Systemet leser kunde, org.nr, vilkår, oppstart og målepunkter. Du kontrollerer forslagene før de lagres i registeret.</p>
-              </div>
+              <span className="drop-zone-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4M12 4 7 9M12 4l5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg>
+              </span>
+              <h2>Last opp signert PDF-avtale</h2>
+              <p>Dra PDF-avtalen hit. Systemet leser kunde, org.nr, vilkår, oppstart og målepunkter. Du kontrollerer forslagene før de lagres i registeret.</p>
+              <span className="drop-zone-or">eller</span>
               <label className="upload-btn">
                 <input
                   type="file"
@@ -1252,10 +1254,12 @@ export default function StromflytPage() {
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
               onDrop={(e) => dropFile(e, "excel")}
             >
-              <div>
-                <h2>Importer målepunktliste fra Excel</h2>
-                <p><b>Dra Excel-filen hit</b>, eller velg den fra filer. Systemet finner faner og kolonner automatisk, kontrollerer radene og foreslår hva som kan legges i registeret.</p>
-              </div>
+              <span className="drop-zone-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4M12 4 7 9M12 4l5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg>
+              </span>
+              <h2>Importer målepunktliste fra Excel</h2>
+              <p>Dra Excel-filen hit. Systemet finner faner og kolonner automatisk, kontrollerer radene og foreslår hva som kan legges i registeret.</p>
+              <span className="drop-zone-or">eller</span>
               <label className="upload-btn">
                 <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={excelParsing || excelImporting} onChange={(e) => parseExcel(e.target.files?.[0])} />
                 {excelParsing ? "Leser arbeidsboken …" : "Velg Excel-fil"}
@@ -1336,10 +1340,12 @@ export default function StromflytPage() {
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
               onDrop={(e) => dropFile(e, "faktura")}
             >
-              <div>
-                <h2>Last opp strømfaktura</h2>
-                <p><b>Dra en inngående strømfaktura hit</b> (PDF, fra netteier eller kraftleverandør), eller velg den fra filer. Systemet leser målenummer, MålepunktID, adresse, netteier og forbruk uansett hvilket oppsett fakturaen har - ulike leverandører (Entelios, Lnett, Fjordkraft osv.) ser helt forskjellige ut. Du kontrollerer alltid funnene før de lagres.</p>
-              </div>
+              <span className="drop-zone-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4M12 4 7 9M12 4l5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg>
+              </span>
+              <h2>Last opp strømfaktura</h2>
+              <p>Dra en inngående strømfaktura hit (PDF, fra netteier eller kraftleverandør). Systemet leser målenummer, MålepunktID, adresse, netteier og forbruk uansett hvilket oppsett fakturaen har - ulike leverandører (Entelios, Lnett, Fjordkraft osv.) ser helt forskjellige ut. Du kontrollerer alltid funnene før de lagres.</p>
+              <span className="drop-zone-or">eller</span>
               <label className="upload-btn">
                 <input type="file" accept="application/pdf,.pdf" disabled={fakturaParsing || fakturaSaving} onChange={(e) => parseFaktura(e.target.files?.[0])} />
                 {fakturaParsing ? "Leser fakturaen …" : "Velg strømfaktura"}
@@ -1698,9 +1704,12 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .page-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.page-heading h1{font-size:24px;letter-spacing:-.02em}.page-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
 .overview-section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin:4px 0 12px}.overview-section-heading h2{font-size:16px}.overview-section-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
 .overview-queues{display:grid;grid-template-columns:repeat(5,minmax(170px,1fr));gap:12px}.overview-queues button{font:inherit;text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:16px;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}.overview-queues button:hover{border-color:var(--sf-accent);box-shadow:0 4px 18px rgba(26,34,48,.06)}.overview-queues button span{font-weight:580}.overview-queues button b{grid-row:1/3;grid-column:2;font-size:24px;color:var(--sf-ink)}.overview-queues button small{font-size:12px;color:var(--sf-accent)}
-.upload-card{display:flex;align-items:center;justify-content:space-between;gap:24px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:12px;padding:22px 24px;margin-bottom:20px}
-.upload-card h2{font-size:19px}.upload-card p{margin:5px 0 0;color:var(--sf-ink-2);max-width:720px}
-.drop-zone{transition:border-color .15s,background .15s,box-shadow .15s}.drop-zone.dragging{border:2px dashed var(--sf-accent);background:var(--sf-accent-soft);box-shadow:0 0 0 4px color-mix(in srgb,var(--sf-accent) 12%,transparent)}
+.upload-card{background:var(--sf-surface);border-radius:12px;padding:22px 24px;margin-bottom:20px}
+.upload-card h2{font-size:19px;text-align:center}.upload-card p{margin:5px 0 0;color:var(--sf-ink-2);max-width:560px;text-align:center}
+.drop-zone{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;border:2px dashed var(--sf-border-strong);background:var(--sf-surface-2);border-radius:14px;padding:30px 24px;transition:border-color .15s,background .15s,box-shadow .15s}
+.drop-zone.dragging{border-color:var(--sf-accent);background:var(--sf-accent-soft);box-shadow:0 0 0 4px color-mix(in srgb,var(--sf-accent) 12%,transparent)}
+.drop-zone-icon{width:44px;height:44px;border-radius:999px;background:var(--sf-accent-soft);color:var(--sf-accent);display:grid;place-items:center;margin-bottom:6px}
+.drop-zone-or{color:var(--sf-ink-3);font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;margin:6px 0}
 .upload-btn{display:inline-flex;align-items:center;justify-content:center;background:var(--sf-accent);color:var(--sf-accent-ink);padding:10px 16px;border-radius:8px;font-weight:620;cursor:pointer;white-space:nowrap}.upload-btn input{position:absolute;opacity:0;pointer-events:none}.upload-btn:has(input:disabled){opacity:.55;cursor:not-allowed}
 .import-summary{overflow:hidden}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sf-border);border-bottom:1px solid var(--sf-border)}
 .summary-item{background:var(--sf-surface);padding:14px 18px}.summary-item span{display:block;color:var(--sf-ink-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}.summary-item b{display:block;margin-top:3px;font-size:15px}
@@ -1789,7 +1798,7 @@ td .muted{color:var(--sf-ink-3)}
   .sidenav-merke,.sidenav-fot{display:none}
   .sidenav button{width:auto;white-space:nowrap}
 }
-@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.upload-card{align-items:flex-start;flex-direction:column}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
+@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 /* premium polish */
 .topbar{box-shadow:0 1px 0 rgba(0,0,0,.15),0 2px 14px rgba(16,32,45,.18);z-index:30}
