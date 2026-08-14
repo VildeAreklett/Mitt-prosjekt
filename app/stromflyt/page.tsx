@@ -38,6 +38,7 @@ import {
 import type { ParsedAvtale } from "../../lib/avtale-parser";
 import type { ParsedExcelWorkbook, ParsedExcelRow, ParsedExcelSheet } from "../../lib/excel-parser";
 import type { ParsedFaktura } from "../../lib/faktura-parser";
+import { prisomradeFromPostnr } from "../../lib/geo";
 import { supabase } from "../../lib/supabaseClient";
 
 type ExcelGroupConfig = {
@@ -397,7 +398,7 @@ export default function StromflytPage() {
       setFakturaNetteier(result.netteier);
       setFakturaPrisomrade("");
       const adresseForOppslag = [result.adresse, result.postnr, result.poststed].filter(Boolean).join(", ");
-      if (adresseForOppslag) void lookupFakturaAdresse(adresseForOppslag);
+      if (adresseForOppslag) void lookupFakturaAdresse(adresseForOppslag, result.postnr);
     } catch (e: any) {
       flash("Kunne ikke lese fakturaen: " + (e.message ?? e));
     } finally {
@@ -406,18 +407,37 @@ export default function StromflytPage() {
   }
 
   // Prisområde står aldri på selve fakturaen - samme adresseoppslag
-  // (Kartverket + NVE) som brukes ved manuell registrering.
-  async function lookupFakturaAdresse(addr: string) {
+  // (Kartverket + NVE) som brukes ved manuell registrering. Ikke alle adresser
+  // (særlig nyere/industri) finnes i Kartverket sitt register selv om gate og
+  // postnummer er riktig lest (f.eks. "Trøngsla 4" i Flekkefjord) - da faller vi
+  // tilbake på postnummeret vi allerede har fra selve fakturaen, som ikke
+  // krever geokoding i det hele tatt.
+  async function lookupFakturaAdresse(addr: string, postnrFraFaktura: string) {
     setFakturaLookup({ loading: true, msg: "Henter prisområde …" });
     try {
       const r = await fetch("/api/netteier?address=" + encodeURIComponent(addr));
       const d = await r.json();
-      if (!d.ok) { setFakturaLookup({ loading: false, msg: d.error || "Fant ikke automatisk - fyll inn manuelt" }); return; }
-      setFakturaPrisomrade(d.prisomrade || "");
+      if (!d.ok) {
+        const fallback = prisomradeFromPostnr(postnrFraFaktura);
+        if (fallback) {
+          setFakturaPrisomrade(fallback);
+          setFakturaLookup({ loading: false, msg: `Fant ikke nøyaktig adresse, men prisområde utledet fra postnummer (${postnrFraFaktura}): ${fallback}` });
+        } else {
+          setFakturaLookup({ loading: false, msg: d.error || "Fant ikke automatisk - fyll inn manuelt" });
+        }
+        return;
+      }
+      setFakturaPrisomrade(d.prisomrade || prisomradeFromPostnr(postnrFraFaktura) || "");
       if (!fakturaNetteier && d.netteier) setFakturaNetteier(d.netteier);
       setFakturaLookup({ loading: false, msg: d.prisomrade ? `Prisområde: ${d.prisomrade}` : "Fant adressen, men ikke prisområdet" });
     } catch {
-      setFakturaLookup({ loading: false, msg: "Oppslag feilet - fyll inn manuelt" });
+      const fallback = prisomradeFromPostnr(postnrFraFaktura);
+      if (fallback) {
+        setFakturaPrisomrade(fallback);
+        setFakturaLookup({ loading: false, msg: `Oppslag feilet, men prisområde utledet fra postnummer: ${fallback}` });
+      } else {
+        setFakturaLookup({ loading: false, msg: "Oppslag feilet - fyll inn manuelt" });
+      }
     }
   }
 
