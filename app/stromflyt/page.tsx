@@ -388,10 +388,18 @@ export default function StromflytPage() {
     setFakturaParsing(true);
     setFakturaParsed(null);
     setFakturaName(file.name);
+    // Lastes opp til Supabase Storage i stedet for å sendes direkte i
+    // forespørselen - Vercel avviser forespørsler over ca. 4,5 MB, og
+    // skannede fakturaer med mye historikk (flere sider) overskrider ofte det.
+    const storagePath = `${(await supabase.auth.getUser()).data.user?.id || "ukjent"}/${Date.now()}-${file.name}`;
     try {
-      const body = new FormData();
-      body.append("file", file);
-      const res = await fetch("/api/faktura/parse", { method: "POST", body, headers: await stromflytAuthHeaders() });
+      const { error: uploadError } = await supabase.storage.from("fakturaer").upload(storagePath, file);
+      if (uploadError) throw new Error("Kunne ikke laste opp filen: " + uploadError.message);
+      const res = await fetch("/api/faktura/parse", {
+        method: "POST",
+        body: JSON.stringify({ storagePath }),
+        headers: { ...(await stromflytAuthHeaders()), "Content-Type": "application/json" },
+      });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese fakturaen");
       const result = data as ParsedFaktura & { ok: true };

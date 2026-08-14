@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const supabaseUrl =
   process.env.NEXT_PUBLIC_STROMFLYT_SUPABASE_URL ||
@@ -8,7 +8,7 @@ const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export type ApiAuthResult =
-  | { ok: true; email: string }
+  | { ok: true; email: string; supabase: SupabaseClient }
   | { ok: false; status: 401 | 403 | 500; error: string };
 
 export async function requireStromflytAccess(req: Request): Promise<ApiAuthResult> {
@@ -47,5 +47,8 @@ export async function requireStromflytAccess(req: Request): Promise<ApiAuthResul
     return { ok: false, status: 403, error: "Du har ikke tilgang til Strømflyt" };
   }
 
-  return { ok: true, email };
+  // Klienten er bundet til brukerens egen JWT, så Storage/RLS-policyer
+  // (f.eks. "authenticated"-tilgang til fakturaer-bøtten) gjelder som normalt -
+  // ingen service-rolle-nøkkel nødvendig.
+  return { ok: true, email, supabase };
 }
