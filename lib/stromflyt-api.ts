@@ -5,6 +5,19 @@ import type { Malepunkt, Status } from "./stromflyt-config";
 
 const TABLE = "strombestillinger";
 
+// avtalt_oppstart og rute er tomme strenger ("") som sentinel-verdi i
+// skjemaene ("ikke valgt ennå") - men kolonnene er nullable date/text i
+// databasen (jf. migration-004, for Kladd-utkast fanget fra en strømfaktura
+// før oppstart/rute er avklart), og Postgres godtar ikke "" som en dato eller
+// som en rute-verdi (check-constraint krever A/B eller null). Rett det om til
+// ekte null her, ett sted, i stedet for i hver kallested.
+function tilDbRad<T extends Record<string, unknown>>(m: T): T {
+  const rad = { ...m } as Record<string, unknown>;
+  if (rad.avtalt_oppstart === "") rad.avtalt_oppstart = null;
+  if (rad.rute === "") rad.rute = null;
+  return rad as T;
+}
+
 export async function listMalepunkt(): Promise<Malepunkt[]> {
   const { data, error } = await supabase
     .from(TABLE)
@@ -27,7 +40,7 @@ export async function insertMalepunktWithStatus(
 ): Promise<Malepunkt> {
   const { data, error } = await supabase
     .from(TABLE)
-    .insert([{ ...m, status, entelios_ref: "" }])
+    .insert([{ ...tilDbRad(m), status, entelios_ref: "" }])
     .select()
     .single();
   if (error) {
@@ -63,7 +76,7 @@ export async function updateMalepunktDetails(
   id: string,
   patch: Partial<Omit<Malepunkt, "id" | "created_at" | "updated_at">>,
 ): Promise<void> {
-  const { error } = await supabase.from(TABLE).update(patch).eq("id", id);
+  const { error } = await supabase.from(TABLE).update(tilDbRad(patch)).eq("id", id);
   if (error) {
     if (error.code === "23505") throw new Error("Dette målepunktet ligger allerede i registeret.");
     throw error;

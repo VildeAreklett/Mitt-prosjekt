@@ -482,17 +482,22 @@ export default function StromflytPage() {
   }
 
   async function saveFaktura() {
-    if (!fakturaParsed || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr) || !fakturaRute) {
-      flash("Kunde, org.nr (9 siffer) og rute må fylles ut");
+    // Rute, oppstartsdato og kommersielle vilkår kommer fra AVTALEN, ikke fra
+    // fakturaen - de er ofte ikke avklart ennå når selger fanger opp et
+    // målepunkt fra en faktura. Kun kunde/org.nr (for å vite hvem det tilhører)
+    // og det fakturaen faktisk kan gi (adresse/målenummer/MålepunktID/netteier)
+    // er påkrevd her - resten fylles ut senere når avtalen er klar.
+    if (!fakturaParsed || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr)) {
+      flash("Kunde og org.nr (9 siffer) må fylles ut");
       return;
     }
-    if (fakturaRute === "B" && !/^\d+([.,]\d+)?$/.test(fakturaPaslag)) { flash("Fyll inn påslag (øre/kWh)"); return; }
-    if (fakturaRute === "A" && !/^\d+$/.test(fakturaFastArspris)) { flash("Fyll inn fast årspris (kr)"); return; }
+    if (fakturaRute === "B" && fakturaPaslag && !/^\d+([.,]\d+)?$/.test(fakturaPaslag)) { flash("Påslag må være et tall (øre/kWh)"); return; }
+    if (fakturaRute === "A" && fakturaFastArspris && !/^\d+$/.test(fakturaFastArspris)) { flash("Fast årspris må være et helt tall (kr)"); return; }
     const duplicate = rows.some((r) => r.maalepunkt_id === fakturaParsed.malepunkt_id);
     if (duplicate) { flash("Dette målepunktet ligger allerede i registeret"); return; }
     setFakturaSaving(true);
     try {
-      await insertMalepunkt({
+      await insertMalepunktWithStatus({
         kunde: fakturaKunde.trim(),
         org_nr: fakturaOrgNr,
         selger: "",
@@ -507,15 +512,16 @@ export default function StromflytPage() {
         avtalt_oppstart: "",
         at_kode: "",
         rute: fakturaRute,
-        paslag_ore_kwh: fakturaRute === "B" ? Number(fakturaPaslag.replace(",", ".")) : null,
+        paslag_ore_kwh: fakturaRute === "B" && fakturaPaslag ? Number(fakturaPaslag.replace(",", ".")) : null,
         fast_pr_maaler: null,
-        fast_aarspris: fakturaRute === "A" ? Number(fakturaFastArspris) : null,
+        fast_aarspris: fakturaRute === "A" && fakturaFastArspris ? Number(fakturaFastArspris) : null,
         signert: fakturaSignert,
         kommentar: [
           `Importert fra strømfaktura: ${fakturaName}${fakturaParsed.kundenr_hos_leverandor ? ` (kundenr ${fakturaParsed.kundenr_hos_leverandor} hos nåværende leverandør)` : ""}`,
           fakturaParsed.usikre_felt.length ? `Usikre felt ved utlesing: ${fakturaParsed.usikre_felt.join(", ")} - bør bekreftes.` : "",
+          !fakturaRute ? "Rute/oppstart/kommersielt ikke avklart ennå - fyll inn når avtalen er klar." : "",
         ].filter(Boolean).join(" "),
-      });
+      }, fakturaRute ? "Innmeldt" : "Kladd");
       flash(`${fakturaParsed.adresse} lagt i registeret`);
       setFakturaParsed(null);
       setFakturaName("");
@@ -1466,14 +1472,16 @@ export default function StromflytPage() {
                     <span>Hvilken organisasjon i Adaptic Cloud målepunktet hører til.</span>
                   </div>
                   <div className="import-org">
-                    <label>Rute</label>
+                    <label>Rute <span className="muted" style={{ fontWeight: 400 }}>(valgfritt nå)</span></label>
                     <select value={fakturaRute} onChange={(e) => setFakturaRute(e.target.value as Rute | "")}>
-                      <option value="">velg</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option>
+                      <option value="">ikke avklart ennå</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option>
                     </select>
                     {fakturaRute === "A"
                       ? <input className="num compact-input" placeholder="fast årspris kr" value={fakturaFastArspris} onChange={(e) => setFakturaFastArspris(e.target.value)} />
-                      : <input className="num compact-input" placeholder="påslag øre/kWh" value={fakturaPaslag} onChange={(e) => setFakturaPaslag(e.target.value)} />}
-                    <span>Kommersielle vilkår står ikke på fakturaen - fyll inn fra avtalen.</span>
+                      : fakturaRute === "B"
+                        ? <input className="num compact-input" placeholder="påslag øre/kWh" value={fakturaPaslag} onChange={(e) => setFakturaPaslag(e.target.value)} />
+                        : <span />}
+                    <span>Står ikke på fakturaen, og trengs ikke for å lagre - legges til Kladd og kan fylles inn senere når avtalen er klar.</span>
                   </div>
                   <div className="import-org">
                     <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>

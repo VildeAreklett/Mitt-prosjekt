@@ -17,12 +17,15 @@ create table if not exists public.strombestillinger (
   maalepunkt_id     text not null check (maalepunkt_id ~ '^[0-9]{18}$'),
   netteier          text not null,
   prisomrade        text not null check (prisomrade in ('NO1','NO2','NO3','NO4','NO5')),
-  aarsforbruk_kwh   integer not null check (aarsforbruk_kwh >= 0),
-  avtalt_oppstart   date not null,
+  -- Kladd-status er ment for ufullstendige utkast (f.eks. fanget fra en
+  -- strømfaktura, før rute/oppstart/kommersielt er avklart) - derfor er disse
+  -- tre valgfrie i stedet for not null. Se migration-004.
+  aarsforbruk_kwh   integer check (aarsforbruk_kwh >= 0),
+  avtalt_oppstart   date,
   at_kode           text not null,
 
   -- rute og kommersielt
-  rute              text not null check (rute in ('A','B')),
+  rute              text check (rute in ('A','B')),
   paslag_ore_kwh    numeric,
   fast_pr_maaler    numeric,
   fast_aarspris     numeric,
@@ -38,8 +41,9 @@ create table if not exists public.strombestillinger (
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now(),
 
-  -- rute B krever påslag, rute A krever fast årspris
+  -- rute B krever påslag, rute A krever fast årspris - men kun når rute er satt
   constraint rute_kommersielt check (
+    rute is null or
     (rute = 'B' and paslag_ore_kwh is not null) or
     (rute = 'A' and fast_aarspris is not null)
   )
