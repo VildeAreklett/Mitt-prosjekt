@@ -132,6 +132,7 @@ export default function StromflytPage() {
   const [fakturaParsed, setFakturaParsed] = useState<ParsedFaktura | null>(null);
   const [fakturaKunde, setFakturaKunde] = useState("");
   const [fakturaOrgNr, setFakturaOrgNr] = useState("");
+  const [fakturaEnhetMsg, setFakturaEnhetMsg] = useState("");
   const [fakturaCloudOrg, setFakturaCloudOrg] = useState("Strømkunder");
   const [fakturaRute, setFakturaRute] = useState<Rute | "">("");
   const [fakturaPaslag, setFakturaPaslag] = useState("");
@@ -455,6 +456,29 @@ export default function StromflytPage() {
     if (!fakturaRute) setFakturaRute(match.rute);
     if (match.rute === "B" && !fakturaPaslag && match.paslag_ore_kwh != null) setFakturaPaslag(String(match.paslag_ore_kwh));
     if (match.rute === "A" && !fakturaFastArspris && match.fast_aarspris != null) setFakturaFastArspris(String(match.fast_aarspris));
+  }
+
+  // Motsatt vei av kunde->org.nr-utfyllingen over: skriv inn org.nr, få
+  // firmanavnet slått opp automatisk fra Brønnøysundregistrene (gratis,
+  // offisiell kilde - samme prinsipp som adresseoppslaget). Overskriver
+  // aldri et kundenavn brukeren allerede har skrevet inn selv.
+  async function handleFakturaOrgNrChange(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 9);
+    setFakturaOrgNr(digits);
+    setFakturaEnhetMsg("");
+    if (digits.length !== 9 || fakturaKunde.trim()) return;
+    const existing = rows.find((r) => r.org_nr === digits);
+    if (existing) { setFakturaKunde(existing.kunde); setFakturaEnhetMsg(`Fylt inn fra registeret: ${existing.kunde}`); return; }
+    setFakturaEnhetMsg("Slår opp firmanavn …");
+    try {
+      const r = await fetch("/api/enhet?orgnr=" + digits);
+      const d = await r.json();
+      if (!d.ok) { setFakturaEnhetMsg(d.error || "Fant ikke enhet - skriv inn kundenavn manuelt"); return; }
+      setFakturaKunde(d.navn);
+      setFakturaEnhetMsg(`Hentet fra Brønnøysundregistrene${d.underenhet ? " (underenhet)" : ""}: ${d.navn}`);
+    } catch {
+      setFakturaEnhetMsg("Oppslag feilet - skriv inn kundenavn manuelt");
+    }
   }
 
   async function saveFaktura() {
@@ -1432,8 +1456,8 @@ export default function StromflytPage() {
                   </div>
                   <div className="import-org">
                     <label>Org.nr</label>
-                    <input className="num" maxLength={9} value={fakturaOrgNr} onChange={(e) => setFakturaOrgNr(e.target.value.replace(/\D/g, "").slice(0, 9))} placeholder="9 siffer" />
-                    <span>Fylles automatisk hvis kunden allerede finnes i registeret.</span>
+                    <input className="num" maxLength={9} value={fakturaOrgNr} onChange={(e) => handleFakturaOrgNrChange(e.target.value)} placeholder="9 siffer" />
+                    <span>{fakturaEnhetMsg || "Skriv inn org.nr for å hente kundenavn automatisk fra Brønnøysundregistrene."}</span>
                   </div>
                   <div className="import-org">
                     <label>Cloud-org</label>
