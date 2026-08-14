@@ -37,6 +37,7 @@ import {
 } from "../../lib/stromflyt-api";
 import type { ParsedAvtale } from "../../lib/avtale-parser";
 import type { ParsedExcelWorkbook, ParsedExcelRow, ParsedExcelSheet } from "../../lib/excel-parser";
+import type { ParsedFaktura } from "../../lib/faktura-parser";
 import { supabase } from "../../lib/supabaseClient";
 
 type ExcelGroupConfig = {
@@ -99,7 +100,7 @@ const emptyForm: Partial<Malepunkt> = {
 
 export default function StromflytPage() {
   const requireAuth = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
-  const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel">("reg");
+  const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel" | "faktura">("reg");
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -124,6 +125,20 @@ export default function StromflytPage() {
   const [importCloudOrg, setImportCloudOrg] = useState("Strømkunder");
   const [importSeller, setImportSeller] = useState("");
   const [importName, setImportName] = useState("");
+  const [fakturaParsing, setFakturaParsing] = useState(false);
+  const [fakturaSaving, setFakturaSaving] = useState(false);
+  const [fakturaName, setFakturaName] = useState("");
+  const [fakturaParsed, setFakturaParsed] = useState<ParsedFaktura | null>(null);
+  const [fakturaKunde, setFakturaKunde] = useState("");
+  const [fakturaOrgNr, setFakturaOrgNr] = useState("");
+  const [fakturaCloudOrg, setFakturaCloudOrg] = useState("Strømkunder");
+  const [fakturaRute, setFakturaRute] = useState<Rute | "">("");
+  const [fakturaPaslag, setFakturaPaslag] = useState("");
+  const [fakturaFastArspris, setFakturaFastArspris] = useState("");
+  const [fakturaSignert, setFakturaSignert] = useState(false);
+  const [fakturaNetteier, setFakturaNetteier] = useState("");
+  const [fakturaPrisomrade, setFakturaPrisomrade] = useState("");
+  const [fakturaLookup, setFakturaLookup] = useState<{ loading: boolean; msg: string }>({ loading: false, msg: "" });
   const [excelParsing, setExcelParsing] = useState(false);
   const [excelImporting, setExcelImporting] = useState(false);
   const [excelData, setExcelData] = useState<ParsedExcelWorkbook | null>(null);
@@ -131,7 +146,7 @@ export default function StromflytPage() {
   const [excelName, setExcelName] = useState("");
   const [excelSelected, setExcelSelected] = useState<Record<number, boolean>>({});
   const [excelMappings, setExcelMappings] = useState<Record<string, ExcelGroupConfig>>({});
-  const [dragTarget, setDragTarget] = useState<"pdf" | "excel" | null>(null);
+  const [dragTarget, setDragTarget] = useState<"pdf" | "excel" | "faktura" | null>(null);
   const [authLoading, setAuthLoading] = useState(requireAuth);
   const [userEmail, setUserEmail] = useState<string | null>(requireAuth ? null : "lokal test");
   const [loginEmail, setLoginEmail] = useState("");
@@ -363,7 +378,103 @@ export default function StromflytPage() {
     }
   }
 
-  function dropFile(e: DragEvent<HTMLDivElement>, kind: "pdf" | "excel") {
+  // Strømfaktura: ingen fast mal (hver netteier/kraftleverandør har sitt eget
+  // oppsett, og fakturaene er ofte skannet uten tekstlag) - se lib/faktura-parser.ts
+  // for hvorfor dette sendes til Claude i stedet for et fast tekstuttrekk.
+  async function parseFaktura(file: File | undefined) {
+    if (!file) return;
+    setFakturaParsing(true);
+    setFakturaParsed(null);
+    setFakturaName(file.name);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/faktura/parse", { method: "POST", body, headers: await stromflytAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese fakturaen");
+      const result = data as ParsedFaktura & { ok: true };
+      setFakturaParsed(result);
+      setFakturaNetteier(result.netteier);
+      setFakturaPrisomrade("");
+      const adresseForOppslag = [result.adresse, result.postnr, result.poststed].filter(Boolean).join(", ");
+      if (adresseForOppslag) void lookupFakturaAdresse(adresseForOppslag);
+    } catch (e: any) {
+      flash("Kunne ikke lese fakturaen: " + (e.message ?? e));
+    } finally {
+      setFakturaParsing(false);
+    }
+  }
+
+  // Prisområde står aldri på selve fakturaen - samme adresseoppslag
+  // (Kartverket + NVE) som brukes ved manuell registrering.
+  async function lookupFakturaAdresse(addr: string) {
+    setFakturaLookup({ loading: true, msg: "Henter prisområde …" });
+    try {
+      const r = await fetch("/api/netteier?address=" + encodeURIComponent(addr));
+      const d = await r.json();
+      if (!d.ok) { setFakturaLookup({ loading: false, msg: d.error || "Fant ikke automatisk - fyll inn manuelt" }); return; }
+      setFakturaPrisomrade(d.prisomrade || "");
+      if (!fakturaNetteier && d.netteier) setFakturaNetteier(d.netteier);
+      setFakturaLookup({ loading: false, msg: d.prisomrade ? `Prisområde: ${d.prisomrade}` : "Fant adressen, men ikke prisområdet" });
+    } catch {
+      setFakturaLookup({ loading: false, msg: "Oppslag feilet - fyll inn manuelt" });
+    }
+  }
+
+  async function saveFaktura() {
+    if (!fakturaParsed || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr) || !fakturaRute) {
+      flash("Kunde, org.nr (9 siffer) og rute må fylles ut");
+      return;
+    }
+    if (fakturaRute === "B" && !/^\d+([.,]\d+)?$/.test(fakturaPaslag)) { flash("Fyll inn påslag (øre/kWh)"); return; }
+    if (fakturaRute === "A" && !/^\d+$/.test(fakturaFastArspris)) { flash("Fyll inn fast årspris (kr)"); return; }
+    const duplicate = rows.some((r) => r.maalepunkt_id === fakturaParsed.malepunkt_id);
+    if (duplicate) { flash("Dette målepunktet ligger allerede i registeret"); return; }
+    setFakturaSaving(true);
+    try {
+      await insertMalepunkt({
+        kunde: fakturaKunde.trim(),
+        org_nr: fakturaOrgNr,
+        selger: "",
+        cloud_org: fakturaCloudOrg.trim(),
+        bygg: fakturaParsed.adresse,
+        adresse: fakturaParsed.adresse,
+        maalenummer: fakturaParsed.malenummer,
+        maalepunkt_id: fakturaParsed.malepunkt_id,
+        netteier: fakturaNetteier.trim(),
+        prisomrade: fakturaPrisomrade,
+        aarsforbruk_kwh: fakturaParsed.arsforbruk_kwh,
+        avtalt_oppstart: "",
+        at_kode: "",
+        rute: fakturaRute,
+        paslag_ore_kwh: fakturaRute === "B" ? Number(fakturaPaslag.replace(",", ".")) : null,
+        fast_pr_maaler: null,
+        fast_aarspris: fakturaRute === "A" ? Number(fakturaFastArspris) : null,
+        signert: fakturaSignert,
+        kommentar: [
+          `Importert fra strømfaktura: ${fakturaName}${fakturaParsed.kundenr_hos_leverandor ? ` (kundenr ${fakturaParsed.kundenr_hos_leverandor} hos nåværende leverandør)` : ""}`,
+          fakturaParsed.usikre_felt.length ? `Usikre felt ved utlesing: ${fakturaParsed.usikre_felt.join(", ")} - bør bekreftes.` : "",
+        ].filter(Boolean).join(" "),
+      });
+      flash(`${fakturaParsed.adresse} lagt i registeret`);
+      setFakturaParsed(null);
+      setFakturaName("");
+      setFakturaKunde("");
+      setFakturaOrgNr("");
+      setFakturaRute("");
+      setFakturaPaslag("");
+      setFakturaFastArspris("");
+      setFakturaSignert(false);
+      await refresh();
+      setTab("reg");
+    } catch (e: any) {
+      flash("Kunne ikke lagre: " + (e.message ?? e));
+    } finally {
+      setFakturaSaving(false);
+    }
+  }
+
+  function dropFile(e: DragEvent<HTMLDivElement>, kind: "pdf" | "excel" | "faktura") {
     e.preventDefault();
     setDragTarget(null);
     const file = e.dataTransfer.files?.[0];
@@ -371,6 +482,9 @@ export default function StromflytPage() {
     if (kind === "pdf") {
       if (!file.name.toLowerCase().endsWith(".pdf")) { flash("Slipp en PDF-avtale her"); return; }
       parsePdf(file);
+    } else if (kind === "faktura") {
+      if (!file.name.toLowerCase().endsWith(".pdf")) { flash("Slipp en strømfaktura (PDF) her"); return; }
+      parseFaktura(file);
     } else {
       if (!file.name.toLowerCase().endsWith(".xlsx")) { flash("Slipp en .xlsx-fil her"); return; }
       parseExcel(file);
@@ -873,6 +987,10 @@ export default function StromflytPage() {
                       <span className="ny-tittel">Importer målepunktliste</span>
                       <span className="ny-hint">Les inn hele arbeidsboken på nytt</span>
                     </button>
+                    <button role="menuitem" onClick={() => { setTab("faktura"); setNyOpen(false); }}>
+                      <span className="ny-tittel">Last opp strømfaktura</span>
+                      <span className="ny-hint">Les målenummer, MålepunktID, adresse og forbruk automatisk</span>
+                    </button>
                   </div>
                 </>
               )}
@@ -1204,6 +1322,105 @@ export default function StromflytPage() {
                       </tr>;
                     })}</tbody>
                   </table>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {tab === "faktura" && (
+          <section className="import-page">
+            <div
+              className={"upload-card drop-zone" + (dragTarget === "faktura" ? " dragging" : "")}
+              onDragOver={(e) => { e.preventDefault(); setDragTarget("faktura"); }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
+              onDrop={(e) => dropFile(e, "faktura")}
+            >
+              <div>
+                <h2>Last opp strømfaktura</h2>
+                <p><b>Dra en inngående strømfaktura hit</b> (PDF, fra netteier eller kraftleverandør), eller velg den fra filer. Systemet leser målenummer, MålepunktID, adresse, netteier og forbruk uansett hvilket oppsett fakturaen har - ulike leverandører (Entelios, Lnett, Fjordkraft osv.) ser helt forskjellige ut. Du kontrollerer alltid funnene før de lagres.</p>
+              </div>
+              <label className="upload-btn">
+                <input type="file" accept="application/pdf,.pdf" disabled={fakturaParsing || fakturaSaving} onChange={(e) => parseFaktura(e.target.files?.[0])} />
+                {fakturaParsing ? "Leser fakturaen …" : "Velg strømfaktura"}
+              </label>
+            </div>
+
+            {fakturaParsed && (
+              <div className="import-review">
+                <div className="panel import-summary">
+                  <div className="hd"><h2>Kontroller funnene</h2><span className="sub">{fakturaName}</span></div>
+                  <div className="summary-grid">
+                    <Summary k="Målenummer" v={fakturaParsed.malenummer || "Ikke funnet"} mono />
+                    <Summary k="MålepunktID" v={fakturaParsed.malepunkt_id || "Ikke funnet"} mono bad={fakturaParsed.malepunkt_id.length !== 18} />
+                    <Summary k="Adresse" v={[fakturaParsed.adresse, fakturaParsed.postnr, fakturaParsed.poststed].filter(Boolean).join(", ") || "Ikke funnet"} />
+                    <Summary k="Årsforbruk" v={fakturaParsed.arsforbruk_kwh != null ? `${fmt(fakturaParsed.arsforbruk_kwh)} kWh` : "Ikke funnet"} />
+                    <Summary k="Fakturadato" v={fakturaParsed.fakturadato || "Ikke funnet"} mono />
+                    <Summary k="Kundenr hos nåværende leverandør" v={fakturaParsed.kundenr_hos_leverandor || "-"} mono />
+                  </div>
+                  {fakturaParsed.malepunkt_id.length !== 18 && (
+                    <div className="banner" style={{ margin: "0 18px 18px" }}>MålepunktID er ikke 18 siffer - sjekk at riktig ID ble lest (noen fakturaer viser både en kort intern ID og den fulle 18-sifrede Elhub-ID-en).</div>
+                  )}
+                  {fakturaParsed.usikre_felt.length > 0 && (
+                    <div className="banner" style={{ margin: "0 18px 18px" }}>Usikker på: {fakturaParsed.usikre_felt.join(", ")} - dobbeltsjekk disse feltene.</div>
+                  )}
+
+                  <div className="import-org">
+                    <label>Netteier</label>
+                    <input value={fakturaNetteier} onChange={(e) => setFakturaNetteier(e.target.value)} />
+                    <span>Fra fakturaen - rett opp om noe ser feil ut.</span>
+                  </div>
+                  <div className="import-org">
+                    <label>Prisområde</label>
+                    <input value={fakturaPrisomrade} onChange={(e) => setFakturaPrisomrade(e.target.value)} placeholder="NO1-NO5" />
+                    <span>{fakturaLookup.loading ? "Henter prisområde …" : fakturaLookup.msg || "Slås opp automatisk fra adressen - står aldri på selve fakturaen."}</span>
+                  </div>
+                  <div className="import-org">
+                    <label>Kunde/organisasjon</label>
+                    <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => setFakturaKunde(e.target.value)} placeholder="Kundens navn" />
+                    <datalist id="faktura-kunde-list">{[...new Set(rows.map((r) => r.kunde).filter(Boolean))].map((k) => <option key={k} value={k} />)}</datalist>
+                    <span>
+                      {(() => {
+                        const count = fakturaKunde.trim() ? rows.filter((r) => r.kunde.trim().toLowerCase() === fakturaKunde.trim().toLowerCase()).length : 0;
+                        return fakturaKunde.trim()
+                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før.`
+                          : "Skriv inn eller velg fra listen - viser antall som allerede er registrert på kunden.";
+                      })()}
+                    </span>
+                  </div>
+                  <div className="import-org">
+                    <label>Org.nr</label>
+                    <input className="num" maxLength={9} value={fakturaOrgNr} onChange={(e) => setFakturaOrgNr(e.target.value.replace(/\D/g, "").slice(0, 9))} placeholder="9 siffer" />
+                    <span>Fylles automatisk hvis kunden allerede finnes i registeret.</span>
+                  </div>
+                  <div className="import-org">
+                    <label>Cloud-org</label>
+                    <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
+                    <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+                    <span>Hvilken organisasjon i Adaptic Cloud målepunktet hører til.</span>
+                  </div>
+                  <div className="import-org">
+                    <label>Rute</label>
+                    <select value={fakturaRute} onChange={(e) => setFakturaRute(e.target.value as Rute | "")}>
+                      <option value="">velg</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option>
+                    </select>
+                    {fakturaRute === "A"
+                      ? <input className="num compact-input" placeholder="fast årspris kr" value={fakturaFastArspris} onChange={(e) => setFakturaFastArspris(e.target.value)} />
+                      : <input className="num compact-input" placeholder="påslag øre/kWh" value={fakturaPaslag} onChange={(e) => setFakturaPaslag(e.target.value)} />}
+                    <span>Kommersielle vilkår står ikke på fakturaen - fyll inn fra avtalen.</span>
+                  </div>
+                  <div className="import-org">
+                    <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>
+                    <span />
+                    <span>Kan ikke sendes til Entelios før dette er krysset av.</span>
+                  </div>
+                </div>
+
+                <div className="toolbar">
+                  <span className="grow" />
+                  <button className="btn primary" disabled={fakturaSaving} onClick={saveFaktura}>
+                    {fakturaSaving ? "Lagrer …" : "Legg i registeret"}
+                  </button>
                 </div>
               </div>
             )}
