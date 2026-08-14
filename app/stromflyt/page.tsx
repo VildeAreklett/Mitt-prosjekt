@@ -441,6 +441,22 @@ export default function StromflytPage() {
     }
   }
 
+  // Det vanlige er flere hovedmålere på samme kunde/bygg over tid, ikke bare
+  // ett. Kjenner vi igjen kunden fra før, fylles org.nr/Cloud-org/rute/vilkår
+  // inn automatisk fra siste registrering på samme kunde i stedet for at
+  // selgeren må taste det på nytt for hver nye faktura. Overskriver aldri felt
+  // brukeren allerede har endret manuelt.
+  function handleFakturaKundeChange(value: string) {
+    setFakturaKunde(value);
+    const match = rows.find((r) => r.kunde.trim().toLowerCase() === value.trim().toLowerCase());
+    if (!match) return;
+    if (!fakturaOrgNr) setFakturaOrgNr(match.org_nr);
+    if (!fakturaCloudOrg || fakturaCloudOrg === "Strømkunder") setFakturaCloudOrg(match.cloud_org);
+    if (!fakturaRute) setFakturaRute(match.rute);
+    if (match.rute === "B" && !fakturaPaslag && match.paslag_ore_kwh != null) setFakturaPaslag(String(match.paslag_ore_kwh));
+    if (match.rute === "A" && !fakturaFastArspris && match.fast_aarspris != null) setFakturaFastArspris(String(match.fast_aarspris));
+  }
+
   async function saveFaktura() {
     if (!fakturaParsed || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr) || !fakturaRute) {
       flash("Kunde, org.nr (9 siffer) og rute må fylles ut");
@@ -1403,14 +1419,14 @@ export default function StromflytPage() {
                   </div>
                   <div className="import-org">
                     <label>Kunde/organisasjon</label>
-                    <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => setFakturaKunde(e.target.value)} placeholder="Kundens navn" />
+                    <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => handleFakturaKundeChange(e.target.value)} placeholder="Kundens navn" />
                     <datalist id="faktura-kunde-list">{[...new Set(rows.map((r) => r.kunde).filter(Boolean))].map((k) => <option key={k} value={k} />)}</datalist>
                     <span>
                       {(() => {
                         const count = fakturaKunde.trim() ? rows.filter((r) => r.kunde.trim().toLowerCase() === fakturaKunde.trim().toLowerCase()).length : 0;
                         return fakturaKunde.trim()
-                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før.`
-                          : "Skriv inn eller velg fra listen - viser antall som allerede er registrert på kunden.";
+                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før${count > 0 ? " - org.nr/Cloud-org/rute fylt inn automatisk under" : ""}.`
+                          : "Skriv inn eller velg fra listen - kjent kunde fyller resten ut automatisk.";
                       })()}
                     </span>
                   </div>
