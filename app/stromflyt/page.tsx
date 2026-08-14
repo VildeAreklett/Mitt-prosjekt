@@ -92,6 +92,22 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
 ];
 
+// Kolonner i arbeidslisten som kan skrus av/på - Kunde og Handling vises alltid,
+// resten er valgfrie. Lagres pr. nettleser (localStorage), ikke pr. bruker i
+// databasen - det er en visningspreferanse, ikke data.
+const REG_COLUMNS: { key: string; label: string }[] = [
+  { key: "selger", label: "Selger" },
+  { key: "bygg", label: "Bygg" },
+  { key: "maalepunkt_id", label: "MålepunktID" },
+  { key: "netteier", label: "Netteier" },
+  { key: "prisomrade", label: "Prisområde" },
+  { key: "aarsforbruk_kwh", label: "Årsforbruk" },
+  { key: "rute", label: "Rute" },
+  { key: "kommersielt", label: "Kommersielt" },
+  { key: "status", label: "Status" },
+];
+const REG_COLUMNS_STORAGE_KEY = "stromflyt_synlige_kolonner";
+
 const emptyForm: Partial<Malepunkt> = {
   kunde: "", org_nr: "", selger: "", cloud_org: "", bygg: "", adresse: "", maalenummer: "",
   maalepunkt_id: "", netteier: "", prisomrade: "", aarsforbruk_kwh: null,
@@ -110,6 +126,10 @@ export default function StromflytPage() {
   const [workFilter, setWorkFilter] = useState<WorkFilter>("");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("arbeidsrekkefolge");
+  const [visibleCols, setVisibleCols] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(REG_COLUMNS.map((c) => [c.key, true]))
+  );
+  const [colsMenuOpen, setColsMenuOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -167,6 +187,18 @@ export default function StromflytPage() {
   const [historyFor, setHistoryFor] = useState<Malepunkt | null>(null);
   const [historyRows, setHistoryRows] = useState<HistoryEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Kolonnevisning er en nettleser-preferanse, ikke data - lagres lokalt slik
+  // at valget står ved neste besøk, men uten å blande det inn i registeret.
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(REG_COLUMNS_STORAGE_KEY);
+      if (saved) setVisibleCols((v) => ({ ...v, ...JSON.parse(saved) }));
+    } catch { /* ignorer korrupt/lokalt lagret preferanse */ }
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem(REG_COLUMNS_STORAGE_KEY, JSON.stringify(visibleCols));
+  }, [visibleCols]);
 
   useEffect(() => {
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -293,6 +325,10 @@ export default function StromflytPage() {
       .filter((r) => [r.kunde, r.selger, r.bygg, r.adresse, r.maalepunkt_id, r.maalenummer, r.at_kode, r.netteier].join(" ").toLowerCase().includes(q))
       .slice(0, 8);
   }, [rows, globalSearch]);
+  const regColSpan = useMemo(
+    () => 3 + REG_COLUMNS.filter((c) => visibleCols[c.key] ?? true).length,
+    [visibleCols]
+  );
   const batchRows = useMemo(() => rows.filter((r) => r.status === "Klar for bestilling"), [rows]);
   const selectedRowsForBulk = useMemo(() => rows.filter((r) => selectedIds.includes(r.id)), [rows, selectedIds]);
   const selectedRegisteredIds = useMemo(
@@ -926,8 +962,8 @@ export default function StromflytPage() {
     flash("Mailutkast åpnet - husk å legge ved den nedlastede Excel-filen før du sender");
   }
 
-  function downloadWorklist() {
-    const columns: { label: string; value: (r: Malepunkt) => string }[] = [
+  async function downloadWorklist() {
+    const columns: { label: string; value: (r: Malepunkt) => string | number }[] = [
       { label: "Kunde", value: (r) => r.kunde },
       { label: "Selger", value: (r) => r.selger || "" },
       { label: "Bygg", value: (r) => r.bygg },
@@ -939,16 +975,23 @@ export default function StromflytPage() {
       { label: "Neste handling", value: (r) => nextStatus(r.status) ? displayStatus(nextStatus(r.status)!) : "Ferdig" },
       { label: "Oppstart", value: (r) => r.avtalt_oppstart || "" },
       { label: "Netteier", value: (r) => r.netteier },
-      { label: "Årsforbruk (kWh)", value: (r) => String(r.aarsforbruk_kwh ?? "") },
+      { label: "Årsforbruk (kWh)", value: (r) => r.aarsforbruk_kwh ?? "" },
       { label: "Kommentar", value: (r) => r.kommentar || "" },
     ];
-    const quote = (v: string) => `"${v.replace(/"/g, '""')}"`;
-    const csv = [columns.map((c) => quote(c.label)).join(";"), ...filtered.map((r) => columns.map((c) => quote(c.value(r))).join(";"))].join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    // Full eksport uavhengig av kolonnevisningen på skjermen - dette er ment
+    // som et komplett uttrekk, ikke bare det som er slått på i tabellen.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Arbeidsliste");
+    ws.addRow(columns.map((c) => c.label));
+    filtered.forEach((r) => ws.addRow(columns.map((c) => c.value(r))));
+    ws.getRow(1).font = { bold: true };
+    ws.columns.forEach((col) => { col.width = 20; });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `stromflyt-arbeidsliste-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `stromflyt-arbeidsliste-${new Date().toISOString().slice(0, 10)}.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
     flash(`${filtered.length} rader lastet ned`);
@@ -1176,7 +1219,27 @@ export default function StromflytPage() {
                   <option value="nyeste">nyeste først</option>
                 </select>
               </label>
-              <button className="btn" disabled={!filtered.length} onClick={downloadWorklist}>Last ned arbeidsliste</button>
+              <div className="ny-meny">
+                <button className="btn" aria-haspopup="menu" aria-expanded={colsMenuOpen} onClick={() => setColsMenuOpen((v) => !v)}>Kolonner</button>
+                {colsMenuOpen && (
+                  <>
+                    <div className="dropdown-backdrop" onClick={() => setColsMenuOpen(false)} />
+                    <div className="ny-panel" role="menu" style={{ width: 220 }}>
+                      {REG_COLUMNS.map((c) => (
+                        <label key={c.key} className="checkline" style={{ padding: "6px 10px" }}>
+                          <input
+                            type="checkbox"
+                            checked={visibleCols[c.key] ?? true}
+                            onChange={(e) => setVisibleCols((v) => ({ ...v, [c.key]: e.target.checked }))}
+                          />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <button className="btn" disabled={!filtered.length} onClick={downloadWorklist}>Last ned arbeidsliste (Excel)</button>
             </div>
 
             {selectedRowsForBulk.length > 0 && <div className="bulk-bar">
@@ -1193,12 +1256,21 @@ export default function StromflytPage() {
               <table>
                 <thead><tr>
                   <th className="select-cell"><input type="checkbox" aria-label="Velg alle synlige" checked={allVisibleSelected} onChange={(e) => toggleAllVisible(e.target.checked)} /></th>
-                  <th>Kunde</th><th>Selger</th><th>Bygg</th><th>MålepunktID</th><th>Netteier</th><th>Prisomr.</th>
-                  <th className="num">Årsforbruk</th><th>Rute</th><th>Kommersielt</th><th>Status</th><th>Handling</th>
+                  <th>Kunde</th>
+                  {visibleCols.selger && <th>Selger</th>}
+                  {visibleCols.bygg && <th>Bygg</th>}
+                  {visibleCols.maalepunkt_id && <th>MålepunktID</th>}
+                  {visibleCols.netteier && <th>Netteier</th>}
+                  {visibleCols.prisomrade && <th>Prisomr.</th>}
+                  {visibleCols.aarsforbruk_kwh && <th className="num">Årsforbruk</th>}
+                  {visibleCols.rute && <th>Rute</th>}
+                  {visibleCols.kommersielt && <th>Kommersielt</th>}
+                  {visibleCols.status && <th>Status</th>}
+                  <th>Handling</th>
                 </tr></thead>
                 <tbody>
-                  {loading && <tr><td colSpan={12}><div className="empty">Laster …</div></td></tr>}
-                  {!loading && filtered.length === 0 && <tr><td colSpan={12}><div className="empty"><b>Ingen målepunkt her</b><span>Juster søk eller filter, eller registrer et nytt målepunkt eller last opp en avtale.</span></div></td></tr>}
+                  {loading && <tr><td colSpan={regColSpan}><div className="empty">Laster …</div></td></tr>}
+                  {!loading && filtered.length === 0 && <tr><td colSpan={regColSpan}><div className="empty"><b>Ingen målepunkt her</b><span>Juster søk eller filter, eller registrer et nytt målepunkt eller last opp en avtale.</span></div></td></tr>}
                   {!loading && filtered.map((r) => {
                     const next = nextStatus(r.status);
                     const previous = previousStatus(r.status);
@@ -1206,15 +1278,15 @@ export default function StromflytPage() {
                       <tr key={r.id}>
                         <td className="select-cell"><input type="checkbox" aria-label={`Velg ${r.bygg}`} checked={selectedIds.includes(r.id)} onChange={(e) => toggleSelected(r.id, e.target.checked)} /></td>
                         <td>{r.kunde}</td>
-                        <td>{r.selger || <span className="muted">Ikke satt</span>}</td>
-                        <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>
-                        <td className="num">{r.maalepunkt_id}</td>
-                        <td>{r.netteier}</td>
-                        <td>{r.prisomrade}</td>
-                        <td className="num">{fmt(r.aarsforbruk_kwh)}</td>
-                        <td><span className={"rute " + r.rute}>{r.rute}</span></td>
-                        <td>{kommersielt(r)}</td>
-                        <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>
+                        {visibleCols.selger && <td>{r.selger || <span className="muted">Ikke satt</span>}</td>}
+                        {visibleCols.bygg && <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>}
+                        {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
+                        {visibleCols.netteier && <td>{r.netteier}</td>}
+                        {visibleCols.prisomrade && <td>{r.prisomrade}</td>}
+                        {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}</td>}
+                        {visibleCols.rute && <td><span className={"rute " + r.rute}>{r.rute}</span></td>}
+                        {visibleCols.kommersielt && <td>{kommersielt(r)}</td>}
+                        {visibleCols.status && <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>}
                         <td>
                           <select
                             className="action-select"
