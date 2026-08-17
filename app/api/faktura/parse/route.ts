@@ -38,8 +38,8 @@ export async function POST(req: Request) {
       throw new Error(error?.message || "Fant ikke filen i lagring");
     }
     const buf = new Uint8Array(await data.arrayBuffer());
-    const parsed = await parseFakturaPdf(buf);
-    return NextResponse.json({ ok: true, ...parsed });
+    const fakturaer = await parseFakturaPdf(buf);
+    return NextResponse.json({ ok: true, fakturaer });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "ukjent feil";
     return NextResponse.json({ ok: false, error: "Kunne ikke lese fakturaen: " + msg }, { status: 500 });

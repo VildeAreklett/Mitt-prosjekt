@@ -37,7 +37,7 @@ import {
 } from "../../lib/stromflyt-api";
 import type { ParsedAvtale } from "../../lib/avtale-parser";
 import type { ParsedExcelWorkbook, ParsedExcelRow, ParsedExcelSheet } from "../../lib/excel-parser";
-import type { ParsedFaktura } from "../../lib/faktura-parser";
+import type { ParsedFakturaRow } from "../../lib/faktura-parser";
 import { prisomradeFromPostnr } from "../../lib/geo";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -155,7 +155,16 @@ export default function StromflytPage() {
   const [fakturaParsing, setFakturaParsing] = useState(false);
   const [fakturaSaving, setFakturaSaving] = useState(false);
   const [fakturaName, setFakturaName] = useState("");
-  const [fakturaParsed, setFakturaParsed] = useState<ParsedFaktura | null>(null);
+  // Én PDF kan inneholde flere fakturaer/målere (samlefaktura, eller - sett i
+  // praksis - to helt separate fakturaer limt i samme fil) - derfor en liste,
+  // med egen redigerbar netteier/prisområde/valgt-status per rad. Kunde,
+  // org.nr, rute og kommersielt er felles for hele opplastingen, siden det
+  // vanligste er at alle radene i én faktura tilhører samme kunde.
+  const [fakturaRows, setFakturaRows] = useState<ParsedFakturaRow[] | null>(null);
+  const [fakturaRowNetteier, setFakturaRowNetteier] = useState<Record<number, string>>({});
+  const [fakturaRowPrisomrade, setFakturaRowPrisomrade] = useState<Record<number, string>>({});
+  const [fakturaRowLookupMsg, setFakturaRowLookupMsg] = useState<Record<number, string>>({});
+  const [fakturaSelected, setFakturaSelected] = useState<Record<number, boolean>>({});
   const [fakturaKunde, setFakturaKunde] = useState("");
   const [fakturaOrgNr, setFakturaOrgNr] = useState("");
   const [fakturaEnhetMsg, setFakturaEnhetMsg] = useState("");
@@ -164,9 +173,6 @@ export default function StromflytPage() {
   const [fakturaPaslag, setFakturaPaslag] = useState("");
   const [fakturaFastArspris, setFakturaFastArspris] = useState("");
   const [fakturaSignert, setFakturaSignert] = useState(false);
-  const [fakturaNetteier, setFakturaNetteier] = useState("");
-  const [fakturaPrisomrade, setFakturaPrisomrade] = useState("");
-  const [fakturaLookup, setFakturaLookup] = useState<{ loading: boolean; msg: string }>({ loading: false, msg: "" });
   const [excelParsing, setExcelParsing] = useState(false);
   const [excelImporting, setExcelImporting] = useState(false);
   const [excelData, setExcelData] = useState<ParsedExcelWorkbook | null>(null);
@@ -438,12 +444,19 @@ export default function StromflytPage() {
   async function parseFaktura(file: File | undefined) {
     if (!file) return;
     setFakturaParsing(true);
-    setFakturaParsed(null);
+    setFakturaRows(null);
+    setFakturaRowNetteier({});
+    setFakturaRowPrisomrade({});
+    setFakturaRowLookupMsg({});
+    setFakturaSelected({});
     setFakturaName(file.name);
     // Lastes opp til Supabase Storage i stedet for å sendes direkte i
     // forespørselen - Vercel avviser forespørsler over ca. 4,5 MB, og
     // skannede fakturaer med mye historikk (flere sider) overskrider ofte det.
-    const storagePath = `${(await supabase.auth.getUser()).data.user?.id || "ukjent"}/${Date.now()}-${file.name}`;
+    // Filnavnet kan ikke brukes rått som lagringsnøkkel - mellomrom og norske
+    // bokstaver (æøå) gir "Invalid key" fra Storage.
+    const trygtNavn = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${(await supabase.auth.getUser()).data.user?.id || "ukjent"}/${Date.now()}-${trygtNavn}`;
     try {
       const { error: uploadError } = await supabase.storage.from("fakturaer").upload(storagePath, file);
       if (uploadError) throw new Error("Kunne ikke laste opp filen: " + uploadError.message);
@@ -454,12 +467,19 @@ export default function StromflytPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese fakturaen");
-      const result = data as ParsedFaktura & { ok: true };
-      setFakturaParsed(result);
-      setFakturaNetteier(result.netteier);
-      setFakturaPrisomrade("");
-      const adresseForOppslag = [result.adresse, result.postnr, result.poststed].filter(Boolean).join(", ");
-      if (adresseForOppslag) void lookupFakturaAdresse(adresseForOppslag, result.postnr);
+      const result = data.fakturaer as ParsedFakturaRow[];
+      setFakturaRows(result);
+      const selected: Record<number, boolean> = {};
+      const netteier: Record<number, string> = {};
+      result.forEach((r, i) => {
+        selected[i] = !rows.some((existing) => existing.maalepunkt_id === r.malepunkt_id);
+        netteier[i] = r.netteier;
+        const adresseForOppslag = [r.adresse, r.postnr, r.poststed].filter(Boolean).join(", ");
+        if (adresseForOppslag) void lookupFakturaAdresse(i, adresseForOppslag, r.postnr);
+      });
+      setFakturaSelected(selected);
+      setFakturaRowNetteier(netteier);
+      flash(`${result.length} målepunkt funnet${result.length > 1 ? " i dokumentet" : ""}`);
     } catch (e: any) {
       flash("Kunne ikke lese fakturaen: " + (e.message ?? e));
     } finally {
@@ -472,32 +492,32 @@ export default function StromflytPage() {
   // (særlig nyere/industri) finnes i Kartverket sitt register selv om gate og
   // postnummer er riktig lest (f.eks. "Trøngsla 4" i Flekkefjord) - da faller vi
   // tilbake på postnummeret vi allerede har fra selve fakturaen, som ikke
-  // krever geokoding i det hele tatt.
-  async function lookupFakturaAdresse(addr: string, postnrFraFaktura: string) {
-    setFakturaLookup({ loading: true, msg: "Henter prisområde …" });
+  // krever geokoding i det hele tatt. Slås opp pr. rad siden én PDF kan ha
+  // flere målere på ulike adresser.
+  async function lookupFakturaAdresse(index: number, addr: string, postnrFraFaktura: string) {
+    setFakturaRowLookupMsg((m) => ({ ...m, [index]: "Henter prisområde …" }));
     try {
       const r = await fetch("/api/netteier?address=" + encodeURIComponent(addr));
       const d = await r.json();
       if (!d.ok) {
         const fallback = prisomradeFromPostnr(postnrFraFaktura);
         if (fallback) {
-          setFakturaPrisomrade(fallback);
-          setFakturaLookup({ loading: false, msg: `Fant ikke nøyaktig adresse, men prisområde utledet fra postnummer (${postnrFraFaktura}): ${fallback}` });
+          setFakturaRowPrisomrade((p) => ({ ...p, [index]: fallback }));
+          setFakturaRowLookupMsg((m) => ({ ...m, [index]: `Utledet fra postnr (${postnrFraFaktura})` }));
         } else {
-          setFakturaLookup({ loading: false, msg: d.error || "Fant ikke automatisk - fyll inn manuelt" });
+          setFakturaRowLookupMsg((m) => ({ ...m, [index]: d.error || "Fant ikke automatisk - fyll inn manuelt" }));
         }
         return;
       }
-      setFakturaPrisomrade(d.prisomrade || prisomradeFromPostnr(postnrFraFaktura) || "");
-      if (!fakturaNetteier && d.netteier) setFakturaNetteier(d.netteier);
-      setFakturaLookup({ loading: false, msg: d.prisomrade ? `Prisområde: ${d.prisomrade}` : "Fant adressen, men ikke prisområdet" });
+      setFakturaRowPrisomrade((p) => ({ ...p, [index]: d.prisomrade || prisomradeFromPostnr(postnrFraFaktura) || "" }));
+      setFakturaRowLookupMsg((m) => ({ ...m, [index]: d.prisomrade ? "" : "Fant adressen, men ikke prisområdet" }));
     } catch {
       const fallback = prisomradeFromPostnr(postnrFraFaktura);
       if (fallback) {
-        setFakturaPrisomrade(fallback);
-        setFakturaLookup({ loading: false, msg: `Oppslag feilet, men prisområde utledet fra postnummer: ${fallback}` });
+        setFakturaRowPrisomrade((p) => ({ ...p, [index]: fallback }));
+        setFakturaRowLookupMsg((m) => ({ ...m, [index]: `Oppslag feilet, utledet fra postnr: ${fallback}` }));
       } else {
-        setFakturaLookup({ loading: false, msg: "Oppslag feilet - fyll inn manuelt" });
+        setFakturaRowLookupMsg((m) => ({ ...m, [index]: "Oppslag feilet - fyll inn manuelt" }));
       }
     }
   }
@@ -546,44 +566,59 @@ export default function StromflytPage() {
     // fakturaen - de er ofte ikke avklart ennå når selger fanger opp et
     // målepunkt fra en faktura. Kun kunde/org.nr (for å vite hvem det tilhører)
     // og det fakturaen faktisk kan gi (adresse/målenummer/MålepunktID/netteier)
-    // er påkrevd her - resten fylles ut senere når avtalen er klar.
-    if (!fakturaParsed || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr)) {
+    // er påkrevd her - resten fylles ut senere når avtalen er klar. Kunde/
+    // org.nr/rute/vilkår er felles for alle valgte rader i denne opplastingen.
+    if (!fakturaRows || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr)) {
       flash("Kunde og org.nr (9 siffer) må fylles ut");
       return;
     }
     if (fakturaRute === "B" && fakturaPaslag && !/^\d+([.,]\d+)?$/.test(fakturaPaslag)) { flash("Påslag må være et tall (øre/kWh)"); return; }
     if (fakturaRute === "A" && fakturaFastArspris && !/^\d+$/.test(fakturaFastArspris)) { flash("Fast årspris må være et helt tall (kr)"); return; }
-    const duplicate = rows.some((r) => r.maalepunkt_id === fakturaParsed.malepunkt_id);
-    if (duplicate) { flash("Dette målepunktet ligger allerede i registeret"); return; }
+    const chosen = fakturaRows.map((r, i) => ({ r, i })).filter(({ i }) => fakturaSelected[i]);
+    if (!chosen.length) { flash("Velg minst ett målepunkt"); return; }
     setFakturaSaving(true);
-    try {
-      await insertMalepunktWithStatus({
-        kunde: fakturaKunde.trim(),
-        org_nr: fakturaOrgNr,
-        selger: "",
-        cloud_org: fakturaCloudOrg.trim(),
-        bygg: fakturaParsed.adresse,
-        adresse: fakturaParsed.adresse,
-        maalenummer: fakturaParsed.malenummer,
-        maalepunkt_id: fakturaParsed.malepunkt_id,
-        netteier: fakturaNetteier.trim(),
-        prisomrade: fakturaPrisomrade,
-        aarsforbruk_kwh: fakturaParsed.arsforbruk_kwh,
-        avtalt_oppstart: "",
-        at_kode: "",
-        rute: fakturaRute,
-        paslag_ore_kwh: fakturaRute === "B" && fakturaPaslag ? Number(fakturaPaslag.replace(",", ".")) : null,
-        fast_pr_maaler: null,
-        fast_aarspris: fakturaRute === "A" && fakturaFastArspris ? Number(fakturaFastArspris) : null,
-        signert: fakturaSignert,
-        kommentar: [
-          `Importert fra strømfaktura: ${fakturaName}${fakturaParsed.kundenr_hos_leverandor ? ` (kundenr ${fakturaParsed.kundenr_hos_leverandor} hos nåværende leverandør)` : ""}`,
-          fakturaParsed.usikre_felt.length ? `Usikre felt ved utlesing: ${fakturaParsed.usikre_felt.join(", ")} - bør bekreftes.` : "",
-          !fakturaRute ? "Rute/oppstart/kommersielt ikke avklart ennå - fyll inn når avtalen er klar." : "",
-        ].filter(Boolean).join(" "),
-      }, fakturaRute ? "Innmeldt" : "Kladd");
-      flash(`${fakturaParsed.adresse} lagt i registeret`);
-      setFakturaParsed(null);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const { r, i } of chosen) {
+      if (rows.some((existing) => existing.maalepunkt_id === r.malepunkt_id)) {
+        failures.push(`${r.adresse}: finnes allerede i registeret`);
+        continue;
+      }
+      try {
+        await insertMalepunktWithStatus({
+          kunde: fakturaKunde.trim(),
+          org_nr: fakturaOrgNr,
+          selger: "",
+          cloud_org: fakturaCloudOrg.trim(),
+          bygg: r.adresse,
+          adresse: r.adresse,
+          maalenummer: r.malenummer,
+          maalepunkt_id: r.malepunkt_id,
+          netteier: (fakturaRowNetteier[i] ?? r.netteier).trim(),
+          prisomrade: fakturaRowPrisomrade[i] ?? "",
+          aarsforbruk_kwh: r.arsforbruk_kwh,
+          avtalt_oppstart: "",
+          at_kode: "",
+          rute: fakturaRute,
+          paslag_ore_kwh: fakturaRute === "B" && fakturaPaslag ? Number(fakturaPaslag.replace(",", ".")) : null,
+          fast_pr_maaler: null,
+          fast_aarspris: fakturaRute === "A" && fakturaFastArspris ? Number(fakturaFastArspris) : null,
+          signert: fakturaSignert,
+          kommentar: [
+            `Importert fra strømfaktura: ${fakturaName}${r.kundenr_hos_leverandor ? ` (kundenr ${r.kundenr_hos_leverandor} hos nåværende leverandør)` : ""}`,
+            r.usikre_felt.length ? `Usikre felt ved utlesing: ${r.usikre_felt.join(", ")} - bør bekreftes.` : "",
+            !fakturaRute ? "Rute/oppstart/kommersielt ikke avklart ennå - fyll inn når avtalen er klar." : "",
+          ].filter(Boolean).join(" "),
+        }, fakturaRute ? "Innmeldt" : "Kladd");
+        ok += 1;
+      } catch (e: any) {
+        failures.push(`${r.adresse}: ${e.message ?? e}`);
+      }
+    }
+    setFakturaSaving(false);
+    if (ok) {
+      flash(`${ok} målepunkt lagt i registeret${failures.length ? `, ${failures.length} hoppet over` : ""}`);
+      setFakturaRows(null);
       setFakturaName("");
       setFakturaKunde("");
       setFakturaOrgNr("");
@@ -593,10 +628,8 @@ export default function StromflytPage() {
       setFakturaSignert(false);
       await refresh();
       setTab("reg");
-    } catch (e: any) {
-      flash("Kunne ikke lagre: " + (e.message ?? e));
-    } finally {
-      setFakturaSaving(false);
+    } else {
+      flash(failures[0] || "Ingen målepunkt ble lagt inn");
     }
   }
 
@@ -1589,35 +1622,19 @@ export default function StromflytPage() {
               </label>
             </div>
 
-            {fakturaParsed && (
+            {fakturaRows && (
               <div className="import-review">
                 <div className="panel import-summary">
-                  <div className="hd"><h2>Kontroller funnene</h2><span className="sub">{fakturaName}</span></div>
-                  <div className="summary-grid">
-                    <Summary k="Målenummer" v={fakturaParsed.malenummer || "Ikke funnet"} mono />
-                    <Summary k="MålepunktID" v={fakturaParsed.malepunkt_id || "Ikke funnet"} mono bad={fakturaParsed.malepunkt_id.length !== 18} />
-                    <Summary k="Adresse" v={[fakturaParsed.adresse, fakturaParsed.postnr, fakturaParsed.poststed].filter(Boolean).join(", ") || "Ikke funnet"} />
-                    <Summary k="Årsforbruk" v={fakturaParsed.arsforbruk_kwh != null ? `${fmt(fakturaParsed.arsforbruk_kwh)} kWh` : "Ikke funnet"} />
-                    <Summary k="Fakturadato" v={fakturaParsed.fakturadato || "Ikke funnet"} mono />
-                    <Summary k="Kundenr hos nåværende leverandør" v={fakturaParsed.kundenr_hos_leverandor || "-"} mono />
+                  <div className="hd">
+                    <h2>Kontroller funnene</h2>
+                    <span className="sub">{fakturaName} · {fakturaRows.length} målepunkt funnet{fakturaRows.length > 1 ? " i dokumentet" : ""}</span>
                   </div>
-                  {fakturaParsed.malepunkt_id.length !== 18 && (
-                    <div className="banner" style={{ margin: "0 18px 18px" }}>MålepunktID er ikke 18 siffer - sjekk at riktig ID ble lest (noen fakturaer viser både en kort intern ID og den fulle 18-sifrede Elhub-ID-en).</div>
-                  )}
-                  {fakturaParsed.usikre_felt.length > 0 && (
-                    <div className="banner" style={{ margin: "0 18px 18px" }}>Usikker på: {fakturaParsed.usikre_felt.join(", ")} - dobbeltsjekk disse feltene.</div>
+                  {fakturaRows.length > 1 && (
+                    <div className="banner" style={{ margin: "0 18px 18px", background: "var(--sf-accent-soft)", color: "var(--sf-accent)" }}>
+                      Denne PDF-en inneholder flere målere - kontroller hver rad for seg, de kan gjelde ulike adresser eller til og med ulike leverandører.
+                    </div>
                   )}
 
-                  <div className="import-org">
-                    <label>Netteier</label>
-                    <input value={fakturaNetteier} onChange={(e) => setFakturaNetteier(e.target.value)} />
-                    <span>Fra fakturaen - rett opp om noe ser feil ut.</span>
-                  </div>
-                  <div className="import-org">
-                    <label>Prisområde</label>
-                    <input value={fakturaPrisomrade} onChange={(e) => setFakturaPrisomrade(e.target.value)} placeholder="NO1-NO5" />
-                    <span>{fakturaLookup.loading ? "Henter prisområde …" : fakturaLookup.msg || "Slås opp automatisk fra adressen - står aldri på selve fakturaen."}</span>
-                  </div>
                   <div className="import-org">
                     <label>Kunde/organisasjon</label>
                     <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => handleFakturaKundeChange(e.target.value)} placeholder="Kundens navn" />
@@ -1640,7 +1657,7 @@ export default function StromflytPage() {
                     <label>Cloud-org</label>
                     <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
                     <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
-                    <span>Hvilken organisasjon i Adaptic Cloud målepunktet hører til.</span>
+                    <span>Hvilken organisasjon i Adaptic Cloud målepunktene hører til - gjelder alle valgte rader under.</span>
                   </div>
                   <div className="import-org">
                     <label>Rute <span className="muted" style={{ fontWeight: 400 }}>(valgfritt nå)</span></label>
@@ -1657,15 +1674,55 @@ export default function StromflytPage() {
                   <div className="import-org">
                     <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>
                     <span />
-                    <span>Kan ikke sendes til Entelios før dette er krysset av.</span>
+                    <span>Gjelder alle valgte rader. Kan ikke sendes til Entelios før dette er krysset av.</span>
                   </div>
                 </div>
 
                 <div className="toolbar">
+                  <strong>{Object.values(fakturaSelected).filter(Boolean).length} av {fakturaRows.length} valgt</strong>
+                  <span className="muted">Nye, gyldige rader er valgt automatisk. Dubletter er avhuket.</span>
                   <span className="grow" />
-                  <button className="btn primary" disabled={fakturaSaving} onClick={saveFaktura}>
-                    {fakturaSaving ? "Lagrer …" : "Legg i registeret"}
+                  <button className="btn primary" disabled={fakturaSaving || !Object.values(fakturaSelected).some(Boolean)} onClick={saveFaktura}>
+                    {fakturaSaving ? "Lagrer …" : `Legg ${Object.values(fakturaSelected).filter(Boolean).length} i registeret`}
                   </button>
+                </div>
+
+                <div className="tablewrap">
+                  <table>
+                    <thead><tr>
+                      <th />
+                      <th>Adresse</th><th>Målenummer</th><th>MålepunktID</th><th>Netteier</th><th>Prisområde</th>
+                      <th className="num">Årsforbruk</th><th>Fakturadato</th><th>Kontroll</th>
+                    </tr></thead>
+                    <tbody>{fakturaRows.map((r, i) => {
+                      const duplicate = rows.some((existing) => existing.maalepunkt_id === r.malepunkt_id);
+                      const idBad = r.malepunkt_id.length !== 18;
+                      return (
+                        <tr key={`${r.malepunkt_id}-${i}`}>
+                          <td><input type="checkbox" checked={!!fakturaSelected[i]} disabled={duplicate} onChange={(e) => setFakturaSelected((s) => ({ ...s, [i]: e.target.checked }))} /></td>
+                          <td>{r.adresse}{r.postnr && <div className="muted">{r.postnr} {r.poststed}</div>}</td>
+                          <td className="num">{r.malenummer}</td>
+                          <td className="num" style={idBad ? { color: "var(--sf-crit)" } : undefined}>{r.malepunkt_id || "mangler"}</td>
+                          <td><input className="compact-input" value={fakturaRowNetteier[i] ?? r.netteier} onChange={(e) => setFakturaRowNetteier((n) => ({ ...n, [i]: e.target.value }))} /></td>
+                          <td>
+                            <input className="compact-input" style={{ width: 60 }} placeholder="NO1-NO5" value={fakturaRowPrisomrade[i] ?? ""} onChange={(e) => setFakturaRowPrisomrade((p) => ({ ...p, [i]: e.target.value }))} />
+                            {fakturaRowLookupMsg[i] && <div className="muted" style={{ fontSize: 11 }}>{fakturaRowLookupMsg[i]}</div>}
+                          </td>
+                          <td className="num">{r.arsforbruk_kwh != null ? fmt(r.arsforbruk_kwh) : "-"}</td>
+                          <td className="num">{r.fakturadato || "-"}</td>
+                          <td>
+                            {duplicate
+                              ? <span className="pill s-kladd">Finnes allerede</span>
+                              : idBad
+                                ? <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>MålepunktID ≠ 18 siffer</span>
+                                : r.usikre_felt.length
+                                  ? <span className="pill s-klar" title={r.usikre_felt.join(", ")}>Usikker: {r.usikre_felt[0]}{r.usikre_felt.length > 1 ? ` +${r.usikre_felt.length - 1}` : ""}</span>
+                                  : <span className="pill s-aktiv">Klar</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
                 </div>
               </div>
             )}

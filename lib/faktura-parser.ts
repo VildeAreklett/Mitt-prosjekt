@@ -11,12 +11,16 @@
 // (native PDF-støtte i Messages API) og ber om strukturert JSON tilbake.
 //
 // Prisområde står ALDRI på selve fakturaen - det slås opp separat fra
-// adressen via /api/netteier (samme oppslag som brukes ved manuell
-// registrering), se bruken i app/stromflyt/page.tsx.
+// adressen via /api/netteier, se bruken i app/stromflyt/page.tsx.
+//
+// VIKTIG: én PDF kan inneholde MER ENN ÉN faktura/måler - f.eks. en
+// samlefaktura for flere anlegg, eller (sett i praksis) to helt separate
+// fakturaer fra to ulike selskaper limt sammen i én fil. Derfor returnerer
+// dette alltid en LISTE, aldri et enkelt objekt.
 
 import Anthropic from "@anthropic-ai/sdk";
 
-export interface ParsedFaktura {
+export interface ParsedFakturaRow {
   kundenr_hos_leverandor: string;
   malenummer: string;
   malepunkt_id: string;
@@ -31,35 +35,52 @@ export interface ParsedFaktura {
 
 const TOOL_NAME = "lagre_faktura_data";
 
-const EXTRACTION_PROMPT = `Dette er en strømfaktura fra en norsk netteier eller kraftleverandør (skannet eller
-tekstbasert PDF, ett eller flere sider). Les ut følgende felt og kall verktøyet
-${TOOL_NAME} med resultatet:
+const EXTRACTION_PROMPT = `Dette er én eller flere strømfakturaer fra norske netteiere/kraftleverandører
+(skannet eller tekstbasert PDF). VIKTIG: dokumentet kan inneholde MER ENN ÉN
+faktura/måler - f.eks. en samlefaktura for flere anlegg, flere adresser i
+samme fil, eller (forekommer i praksis) to helt separate fakturaer fra to
+ulike selskaper limt sammen i samme PDF. Se etter tegn på dette: flere
+avsendere/fakturanumre, flere "Måler nr"/"Målernummer"/MålepunktID-verdier,
+eller flere leveringsadresser. IKKE slå sammen flere målere til én rad, og
+IKKE returner bare den første du finner - identifiser HVER unike måler/
+MålepunktID i dokumentet og returner én rad per unike måler i "fakturaer"-listen.
+
+For hver rad, kall verktøyet ${TOOL_NAME} med feltene:
 
 - kundenr_hos_leverandor: kundenummer/kontonummer hos netteier eller
   kraftleverandør (IKKE Adaptic sitt eget kundenummer - dette er kundens
   nåværende leverandørforhold, før overtakelse)
 - malenummer: målernummer / serienummer på selve måleren
-- malepunkt_id: MålepunktID / EAN / GSRN / "fakturamerke" - skal være nøyaktig
-  18 siffer (Elhub-standard). Noen fakturaer viser en kortere intern ID i
-  tillegg til den fulle 18-sifrede - bruk alltid den fulle 18-sifrede når begge
-  finnes.
-- adresse: gateadresse til anlegget/leveringspunktet (ikke fakturamottakers
-  postadresse hvis den er en annen)
+- malepunkt_id: MålepunktID / EAN / GSRN / "fakturamerke" / "Anl id" - skal
+  være nøyaktig 18 siffer (Elhub-standard). Noen fakturaer viser en kortere
+  intern ID i tillegg til den fulle 18-sifrede - bruk alltid den fulle
+  18-sifrede når begge finnes.
+- adresse: gateadresse til anlegget/leveringspunktet/leveringsstedet (ikke
+  fakturamottakers postadresse hvis den er en annen)
 - postnr: postnummer for anlegget
 - poststed: poststed for anlegget
-- netteier: navnet på netteier (nettselskapet), ikke kraftleverandøren, hvis de
-  er forskjellige
-- arsforbruk_kwh: forventet/antatt årsforbruk i kWh hvis oppgitt, ellers null
-  (bruk periodeforbruket × årsfaktor KUN hvis et eksplisitt årsforbrukstall
-  ikke finnes noe sted - merk det da som usikkert)
+- netteier: navnet på netteier (nettselskapet), ikke kraftleverandøren, hvis
+  de er forskjellige. Bruk gjeldende navn hvis fakturaen viser "(tidligere
+  X)" i parentes - ikke det gamle navnet.
+- arsforbruk_kwh: forventet/antatt årsforbruk i kWh hvis oppgitt eksplisitt
+  (f.eks. "Forventet forbruk X kWh/år" eller "Antatt årsforbruk"), ellers
+  null. IKKE regn ut et årstall selv fra ett enkelt måneds- eller
+  periodeforbruk i linjetabellen - bruk kun et eksplisitt oppgitt årstall,
+  og merk feltet som usikkert i usikre_felt hvis du måtte anslå det.
 - fakturadato: fakturadato i format DD.MM.YYYY slik den står på fakturaen
 - usikre_felt: navn på feltene over du var usikker på eller måtte gjette deg
   til (tom liste hvis alt var tydelig)
 
+Tallformat: fakturaene bruker NORSK tallformat (komma som desimaltegn,
+mellomrom eller punktum som tusenskilletegn) - IKKE amerikansk format. Tolk
+f.eks. "1 594,80" eller "1.594,80" som ett tusen fem hundre og nittifire
+komma åtti, ikke som et helt annet tall. Vær spesielt nøye med antall nuller
+når du leser av kWh-forbrukstall.
+
 Prisområde (NO1-NO5) står ALDRI på en strømfaktura - ikke prøv å gjette det,
 det slås opp separat fra adressen.`;
 
-export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFaktura> {
+export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFakturaRow[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -70,28 +91,36 @@ export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFaktura>
   const anthropic = new Anthropic({ apiKey });
   const base64 = Buffer.from(bytes).toString("base64");
 
+  const rowSchema = {
+    type: "object",
+    properties: {
+      kundenr_hos_leverandor: { type: "string" },
+      malenummer: { type: "string" },
+      malepunkt_id: { type: "string" },
+      adresse: { type: "string" },
+      postnr: { type: "string" },
+      poststed: { type: "string" },
+      netteier: { type: "string" },
+      arsforbruk_kwh: { type: ["number", "null"] },
+      fakturadato: { type: "string" },
+      usikre_felt: { type: "array", items: { type: "string" } },
+    },
+    required: ["malenummer", "malepunkt_id", "adresse", "netteier"],
+  };
+
   const message = await anthropic.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 1024,
+    max_tokens: 4096,
     tools: [
       {
         name: TOOL_NAME,
-        description: "Lagre strukturerte data hentet ut fra en strømfaktura.",
+        description: "Lagre strukturerte data hentet ut fra én eller flere strømfakturaer/målere funnet i dokumentet.",
         input_schema: {
           type: "object",
           properties: {
-            kundenr_hos_leverandor: { type: "string" },
-            malenummer: { type: "string" },
-            malepunkt_id: { type: "string" },
-            adresse: { type: "string" },
-            postnr: { type: "string" },
-            poststed: { type: "string" },
-            netteier: { type: "string" },
-            arsforbruk_kwh: { type: ["number", "null"] },
-            fakturadato: { type: "string" },
-            usikre_felt: { type: "array", items: { type: "string" } },
+            fakturaer: { type: "array", items: rowSchema, minItems: 1 },
           },
-          required: ["malenummer", "malepunkt_id", "adresse", "netteier"],
+          required: ["fakturaer"],
         },
       },
     ],
@@ -113,16 +142,24 @@ export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFaktura>
   }
 
   const raw = toolUse.input as Record<string, unknown>;
-  return {
-    kundenr_hos_leverandor: String(raw.kundenr_hos_leverandor ?? ""),
-    malenummer: String(raw.malenummer ?? "").replace(/\s/g, ""),
-    malepunkt_id: String(raw.malepunkt_id ?? "").replace(/\s/g, ""),
-    adresse: String(raw.adresse ?? ""),
-    postnr: String(raw.postnr ?? ""),
-    poststed: String(raw.poststed ?? ""),
-    netteier: String(raw.netteier ?? ""),
-    arsforbruk_kwh: typeof raw.arsforbruk_kwh === "number" ? raw.arsforbruk_kwh : null,
-    fakturadato: String(raw.fakturadato ?? ""),
-    usikre_felt: Array.isArray(raw.usikre_felt) ? raw.usikre_felt.map(String) : [],
-  };
+  const list = Array.isArray(raw.fakturaer) ? raw.fakturaer : [];
+  if (!list.length) {
+    throw new Error("Fant ingen målepunkt i dokumentet.");
+  }
+
+  return list.map((item) => {
+    const r = item as Record<string, unknown>;
+    return {
+      kundenr_hos_leverandor: String(r.kundenr_hos_leverandor ?? ""),
+      malenummer: String(r.malenummer ?? "").replace(/\s/g, ""),
+      malepunkt_id: String(r.malepunkt_id ?? "").replace(/\s/g, ""),
+      adresse: String(r.adresse ?? ""),
+      postnr: String(r.postnr ?? ""),
+      poststed: String(r.poststed ?? ""),
+      netteier: String(r.netteier ?? ""),
+      arsforbruk_kwh: typeof r.arsforbruk_kwh === "number" ? r.arsforbruk_kwh : null,
+      fakturadato: String(r.fakturadato ?? ""),
+      usikre_felt: Array.isArray(r.usikre_felt) ? r.usikre_felt.map(String) : [],
+    };
+  });
 }
