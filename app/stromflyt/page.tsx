@@ -143,6 +143,12 @@ export default function StromflytPage() {
   const [parsed, setParsed] = useState<ParsedAvtale | null>(null);
   const [selectedRows, setSelectedRows] = useState<Record<number, boolean>>({});
   const [rowAtCodes, setRowAtCodes] = useState<Record<number, string>>({});
+  // Rader avtalen matcher mot et MålepunktID som allerede ligger i registeret
+  // (typisk en Kladd fanget opp fra en strømfaktura, som mangler rute/
+  // oppstart/vilkår) - disse kan velges for OPPDATERING i stedet for å bare
+  // hoppes over som dublett.
+  const [updateRows, setUpdateRows] = useState<Record<number, boolean>>({});
+  const [updatingExisting, setUpdatingExisting] = useState(false);
   const [importCloudOrg, setImportCloudOrg] = useState("Strømkunder");
   const [importSeller, setImportSeller] = useState("");
   const [importName, setImportName] = useState("");
@@ -403,11 +409,17 @@ export default function StromflytPage() {
       setImportCloudOrg(result.rute === "B" ? "Strømkunder" : result.kunde || "");
       setImportSeller(rows.find((r) => r.org_nr === result.org_nr)?.selger || "");
       const next: Record<number, boolean> = {};
+      const nextUpdate: Record<number, boolean> = {};
       result.rows.forEach((r, i) => {
-        const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
-        next[i] = r.gyldig && !duplicate;
+        const existing = rows.find((row) => row.maalepunkt_id === r.maalepunkt_id);
+        next[i] = r.gyldig && !existing;
+        // Foreslå oppdatering som standard kun når det som allerede ligger der
+        // faktisk mangler rute (typisk en Kladd fanget fra en strømfaktura) -
+        // ikke overskriv en ferdig utfylt rad uten at brukeren ber om det.
+        if (existing && !existing.rute) nextUpdate[i] = true;
       });
       setSelectedRows(next);
+      setUpdateRows(nextUpdate);
       setRowAtCodes({});
     } catch (e: any) {
       flash("Kunne ikke lese avtalen: " + (e.message ?? e));
@@ -757,6 +769,50 @@ export default function StromflytPage() {
       flash(`${ok} målepunkt lagt i registeret${failures.length ? `, ${failures.length} hoppet over` : ""}`);
     } else {
       flash(failures[0] || "Ingen målepunkt ble lagt inn");
+    }
+  }
+
+  // Fyller igjen hullene (rute/vilkår/oppstart/signert/AT-kode) på målepunkt
+  // som allerede ligger i registeret - typisk en Kladd fanget opp fra en
+  // strømfaktura, der avtalen ikke var klar ennå. Overskriver aldri felt som
+  // allerede har en verdi, bortsett fra "signert" og "avtalt_oppstart" som
+  // legitimt kan gå fra ukjent til kjent når avtalen kommer på plass.
+  async function updateExistingFromAvtale() {
+    if (!parsed || !parsed.rute) { flash("Fant ikke rute i avtalen"); return; }
+    const chosen = parsed.rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ index }) => updateRows[index]);
+    if (!chosen.length) { flash("Ingen eksisterende målepunkt er valgt for oppdatering"); return; }
+
+    setUpdatingExisting(true);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const { row, index } of chosen) {
+      const existing = rows.find((r) => r.maalepunkt_id === row.maalepunkt_id);
+      if (!existing) { failures.push(`${row.adresse}: fant ikke lenger raden i registeret`); continue; }
+      try {
+        await updateMalepunktDetails(existing.id, {
+          rute: existing.rute || parsed.rute,
+          paslag_ore_kwh: existing.rute === "A" ? existing.paslag_ore_kwh : (existing.paslag_ore_kwh ?? (parsed.rute === "B" ? parsed.paslag_ore_kwh : null)),
+          fast_pr_maaler: existing.fast_pr_maaler ?? parsed.fast_pr_maaler,
+          fast_aarspris: existing.rute === "B" ? existing.fast_aarspris : (existing.fast_aarspris ?? (parsed.rute === "A" ? parsed.fast_aarspris : null)),
+          avtalt_oppstart: existing.avtalt_oppstart || parsed.avtalt_oppstart || "",
+          at_kode: existing.at_kode || (rowAtCodes[index] || "").trim(),
+          signert: existing.signert || parsed.avtale_signert,
+          kommentar: [existing.kommentar, `Oppdatert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`].filter(Boolean).join(" | "),
+        });
+        ok += 1;
+      } catch (e: any) {
+        failures.push(`${row.adresse}: ${e.message ?? e}`);
+      }
+    }
+    setUpdatingExisting(false);
+    await refresh();
+    if (ok) {
+      flash(`${ok} eksisterende målepunkt oppdatert${failures.length ? `, ${failures.length} feilet` : ""}`);
+      setUpdateRows({});
+    } else {
+      flash(failures[0] || "Ingen målepunkt ble oppdatert");
     }
   }
 
@@ -1365,8 +1421,11 @@ export default function StromflytPage() {
 
                 <div className="toolbar">
                   <strong>{parsed.rows.length} målepunkt funnet</strong>
-                  <span className="muted">Gyldige, nye rader er valgt automatisk. TBA og dubletter holdes utenfor.</span>
+                  <span className="muted">Gyldige, nye rader er valgt automatisk. Dubletter med et ufullstendig Kladd-utkast fra før kan oppdateres i stedet.</span>
                   <span className="grow" />
+                  <button className="btn" disabled={updatingExisting || !parsed.avtale_signert || !Object.values(updateRows).some(Boolean)} onClick={updateExistingFromAvtale}>
+                    {updatingExisting ? "Oppdaterer …" : `Oppdater ${Object.values(updateRows).filter(Boolean).length} eksisterende`}
+                  </button>
                   <button className="btn primary" disabled={importing || !parsed.avtale_signert || !Object.values(selectedRows).some(Boolean)} onClick={importParsedRows}>
                     {importing ? "Legger inn …" : `Legg ${Object.values(selectedRows).filter(Boolean).length} i registeret`}
                   </button>
@@ -1376,13 +1435,19 @@ export default function StromflytPage() {
                   <table>
                     <thead><tr><th /><th>Adresse / bygg</th><th>Målenummer</th><th>MålepunktID</th><th>Netteier</th><th>Prisomr.</th><th className="num">Årsforbruk</th><th>AT-kode</th><th>Kontroll</th></tr></thead>
                     <tbody>{parsed.rows.map((r, i) => {
-                      const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
-                      const blocked = !r.gyldig || duplicate;
+                      const existing = rows.find((row) => row.maalepunkt_id === r.maalepunkt_id);
+                      const duplicate = !!existing;
+                      const updatable = !!existing && !existing.rute;
+                      const blocked = !r.gyldig || (duplicate && !updatable);
                       return <tr key={`${r.maalepunkt_id}-${i}`}>
-                        <td><input type="checkbox" checked={!!selectedRows[i]} disabled={blocked} onChange={(e) => setSelectedRows((s) => ({ ...s, [i]: e.target.checked }))} /></td>
+                        <td>
+                          {updatable
+                            ? <input type="checkbox" checked={!!updateRows[i]} onChange={(e) => setUpdateRows((s) => ({ ...s, [i]: e.target.checked }))} title="Oppdater eksisterende Kladd med rute/vilkår/oppstart fra avtalen" />
+                            : <input type="checkbox" checked={!!selectedRows[i]} disabled={blocked} onChange={(e) => setSelectedRows((s) => ({ ...s, [i]: e.target.checked }))} />}
+                        </td>
                         <td>{r.adresse}</td><td className="num">{r.maalenummer}</td><td className="num">{r.maalepunkt_id}</td><td>{r.netteier}</td><td>{r.prisomrade}</td><td className="num">{fmt(r.aarsforbruk_kwh)}</td>
                         <td><input className="num compact-input" placeholder="kan fylles senere" value={rowAtCodes[i] || ""} disabled={blocked} onChange={(e) => setRowAtCodes((s) => ({ ...s, [i]: e.target.value }))} /></td>
-                        <td>{duplicate ? <span className="pill s-kladd">Finnes allerede</span> : r.gyldig ? <span className="pill s-aktiv">Klar</span> : <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{r.problem || "Mangler data"}</span>}</td>
+                        <td>{updatable ? <span className="pill s-klar">Kladd - kan oppdateres</span> : duplicate ? <span className="pill s-kladd">Finnes allerede</span> : r.gyldig ? <span className="pill s-aktiv">Klar</span> : <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{r.problem || "Mangler data"}</span>}</td>
                       </tr>;
                     })}</tbody>
                   </table>
