@@ -341,6 +341,10 @@ export default function StromflytPage() {
     () => selectedRowsForBulk.filter((r) => r.status === "Innmeldt").map((r) => r.id),
     [selectedRowsForBulk],
   );
+  const selectedDeletableIds = useMemo(
+    () => selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling").map((r) => r.id),
+    [selectedRowsForBulk],
+  );
   const excelSheet = useMemo(
     () => excelData?.sheets.find((s) => s.name === excelSheetName) || null,
     [excelData, excelSheetName],
@@ -953,6 +957,25 @@ export default function StromflytPage() {
       flash(`${ids.length} målepunkt satt som klare til Entelios`);
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
+
+  // Samme regel som enkeltrad-slett: kun det som ikke er sendt til Entelios
+  // ennå kan fjernes - unngår at noen ved et uhell slår sammen dette med
+  // sletting av noe som allerede er ute av huset.
+  async function removeSelected() {
+    const targets = selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling");
+    if (!targets.length) { flash("Ingen av de valgte kan slettes (allerede sendt til Entelios eller senere)"); return; }
+    if (!window.confirm(`Slette ${targets.length} valgte målepunkt fra registeret? Dette kan ikke angres.`)) return;
+    let ok = 0;
+    const failures: string[] = [];
+    for (const r of targets) {
+      try { await deleteMalepunkt(r.id); ok += 1; }
+      catch (e: any) { failures.push(`${r.bygg}: ${e.message ?? e}`); }
+    }
+    setSelectedIds((current) => current.filter((id) => !targets.some((t) => t.id === id)));
+    await refresh();
+    if (ok) flash(`${ok} målepunkt slettet${failures.length ? `, ${failures.length} feilet` : ""}`);
+    else flash(failures[0] || "Ingen målepunkt ble slettet");
+  }
   function copyBatch() {
     const header = ENTELIOS_COLUMNS.map((c) => c.label).join("\t");
     const lines = batchRows.map((r) => ENTELIOS_COLUMNS.map((c) => String((r as any)[c.key] ?? "")).join("\t"));
@@ -1300,9 +1323,12 @@ export default function StromflytPage() {
 
             {selectedRowsForBulk.length > 0 && <div className="bulk-bar">
               <b>{selectedRowsForBulk.length} valgt</b>
-              <span>{selectedRegisteredIds.length} kan settes som klare til Entelios</span>
+              <span>{selectedRegisteredIds.length} kan settes som klare til Entelios · {selectedDeletableIds.length} kan slettes</span>
               <span className="grow" />
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
+              <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
+                Slett {selectedDeletableIds.length || "valgte"}
+              </button>
               <button className="btn sm primary" disabled={!selectedRegisteredIds.length} onClick={markSelectedReady}>
                 Sett {selectedRegisteredIds.length || "valgte"} som klar til Entelios
               </button>
