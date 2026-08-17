@@ -56,7 +56,12 @@ For hver rad, kall verktøyet ${TOOL_NAME} med feltene:
   intern ID i tillegg til den fulle 18-sifrede - bruk alltid den fulle
   18-sifrede når begge finnes.
 - adresse: gateadresse til anlegget/leveringspunktet/leveringsstedet (ikke
-  fakturamottakers postadresse hvis den er en annen)
+  fakturamottakers postadresse hvis den er en annen). IKKE ta med en
+  leilighets-/bruksenhetsangivelse hvis den er en åpenbar plassholderverdi
+  som "0000", "00", "H0101" med bare nuller, eller lignende - slike står ofte
+  på fakturaen som en teknisk standardverdi når anlegget ikke faktisk er
+  delt inn i leiligheter, og skal utelates fra adressen. Ta kun med
+  leilighetsnummer når det tydelig er en reell, spesifikk enhet.
 - postnr: postnummer for anlegget
 - poststed: poststed for anlegget
 - netteier: navnet på netteier (nettselskapet), ikke kraftleverandøren, hvis
