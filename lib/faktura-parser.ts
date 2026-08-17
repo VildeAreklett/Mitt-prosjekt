@@ -147,7 +147,7 @@ export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFakturaR
     throw new Error("Fant ingen målepunkt i dokumentet.");
   }
 
-  return list.map((item) => {
+  const rader = list.map((item) => {
     const r = item as Record<string, unknown>;
     return {
       kundenr_hos_leverandor: String(r.kundenr_hos_leverandor ?? ""),
@@ -162,4 +162,29 @@ export async function parseFakturaPdf(bytes: Uint8Array): Promise<ParsedFakturaR
       usikre_felt: Array.isArray(r.usikre_felt) ? r.usikre_felt.map(String) : [],
     };
   });
+
+  return dedupliserPaaMaalepunkt(rader);
+}
+
+// Sikkerhetsnett mot at modellen returnerer samme MålepunktID flere ganger
+// (sett i praksis: en faktura med flere måneders historikk for én og samme
+// måler ble lest som om hver periode var en egen måler). Prompten ber om kun
+// én rad per unike MålepunktID, men vi stoler ikke blindt på det - behold
+// raden med nyest fakturadato per MålepunktID, siden det normalt er det mest
+// oppdaterte anslaget på årsforbruk.
+function dedupliserPaaMaalepunkt(rader: ParsedFakturaRow[]): ParsedFakturaRow[] {
+  const parsedDato = (d: string): number => {
+    const m = d.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (!m) return 0;
+    return Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]);
+  };
+  const beste = new Map<string, ParsedFakturaRow>();
+  for (const rad of rader) {
+    const noekkel = rad.malepunkt_id || `${rad.malenummer}|${rad.adresse}`;
+    const forrige = beste.get(noekkel);
+    if (!forrige || parsedDato(rad.fakturadato) >= parsedDato(forrige.fakturadato)) {
+      beste.set(noekkel, rad);
+    }
+  }
+  return [...beste.values()];
 }
