@@ -1082,7 +1082,7 @@ export default function StromflytPage() {
       { label: "Adresse", value: (r) => r.adresse },
       { label: "MålepunktID", value: (r) => r.maalepunkt_id },
       { label: "Referansekode", value: (r) => r.at_kode || "" },
-      { label: "Rute", value: (r) => r.rute },
+      { label: "Prisområde", value: (r) => r.prisomrade },
       { label: "Status", value: (r) => displayStatus(r.status) },
       { label: "Neste handling", value: (r) => nextStatus(r.status) ? displayStatus(nextStatus(r.status)!) : "Ferdig" },
       { label: "Oppstart", value: (r) => r.avtalt_oppstart || "" },
