@@ -1092,10 +1092,13 @@ export default function StromflytPage() {
     ];
     // Full eksport uavhengig av kolonnevisningen på skjermen - dette er ment
     // som et komplett uttrekk, ikke bare det som er slått på i tabellen.
+    // Er noe huket av i arbeidslisten, eksporter kun de valgte radene -
+    // ellers hele det filtrerte utvalget.
+    const eksportRader = selectedRowsForBulk.length > 0 ? selectedRowsForBulk : filtered;
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Arbeidsliste");
     ws.addRow(columns.map((c) => c.label));
-    filtered.forEach((r) => ws.addRow(columns.map((c) => c.value(r))));
+    eksportRader.forEach((r) => ws.addRow(columns.map((c) => c.value(r))));
     ws.getRow(1).font = { bold: true };
     ws.columns.forEach((col) => { col.width = 20; });
     const buf = await wb.xlsx.writeBuffer();
@@ -1106,7 +1109,7 @@ export default function StromflytPage() {
     link.download = `stromflyt-arbeidsliste-${new Date().toISOString().slice(0, 10)}.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
-    flash(`${filtered.length} rader lastet ned`);
+    flash(`${eksportRader.length} rader lastet ned`);
   }
 
   const errFor = (name: string) => ((showAll || touched[name]) && errors[name]) || "";
