@@ -83,9 +83,20 @@ export function previousStatus(s: Status): Status | null {
 }
 
 // Validering. Returnerer { felt: feilmelding } for ugyldige felt.
-export function validateMalepunkt(m: Partial<Malepunkt>): Record<string, string> {
+//
+// `draft: true` brukes når man lagrer endringer på en EKSISTERENDE rad (uansett
+// status) - da skal identitetsfeltene (kunde, org.nr, adresse, MålepunktID osv.)
+// fortsatt være påkrevd, men innmeldings-spesifikke felt (oppstartsdato,
+// referansekode, signert, rute/pris) kan stå tomme akkurat som når raden ble
+// opprettet som Kladd fra faktura/avtale-opplasting (jf. migration-004). Uten
+// dette unntaket kunne man ikke lagre en liten rettelse (f.eks. stave-feil i
+// adressen) på en Kladd-rad før ALLE innmeldingsfelt var fylt ut - endringen
+// ble da avvist med "Kan ikke meldes inn ennå" og så ut som om lagring ikke
+// virket i det hele tatt.
+export function validateMalepunkt(m: Partial<Malepunkt>, opts?: { draft?: boolean }): Record<string, string> {
   const e: Record<string, string> = {};
   const req = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== "";
+  const draft = !!opts?.draft;
 
   if (!req(m.kunde)) e.kunde = "Påkrevd.";
   if (!/^[0-9]{9}$/.test(String(m.org_nr ?? "").trim())) e.org_nr = "Org.nr må være 9 siffer.";
@@ -98,20 +109,28 @@ export function validateMalepunkt(m: Partial<Malepunkt>): Record<string, string>
   if (!req(m.netteier)) e.netteier = "Velg netteier.";
   if (!PRISOMRADER.includes(String(m.prisomrade) as (typeof PRISOMRADER)[number]))
     e.prisomrade = "Velg prisområde.";
-  if (!/^[0-9]+$/.test(String(m.aarsforbruk_kwh ?? "").trim()))
-    e.aarsforbruk_kwh = "Årsforbruk må være et helt tall (kWh).";
-  if (!req(m.avtalt_oppstart)) e.avtalt_oppstart = "Velg oppstartsdato.";
-  if (!req(m.at_kode)) e.at_kode = "Påkrevd.";
-  if (!m.signert) e.signert = "Avtalen må være signert før innmelding.";
 
-  if (m.rute !== "A" && m.rute !== "B") {
-    e.rute = "Velg rute A eller B.";
-  } else if (m.rute === "B") {
-    if (!/^[0-9]+([.,][0-9]+)?$/.test(String(m.paslag_ore_kwh ?? "").trim()))
-      e.paslag_ore_kwh = "Påslag i øre/kWh.";
-  } else if (m.rute === "A") {
-    if (!/^[0-9]+$/.test(String(m.fast_aarspris ?? "").trim()))
-      e.fast_aarspris = "Fast årspris i kr.";
+  const aarsforbrukTomt = !req(m.aarsforbruk_kwh);
+  if (!(draft && aarsforbrukTomt) && !/^[0-9]+$/.test(String(m.aarsforbruk_kwh ?? "").trim()))
+    e.aarsforbruk_kwh = "Årsforbruk må være et helt tall (kWh).";
+  if (!draft && !req(m.avtalt_oppstart)) e.avtalt_oppstart = "Velg oppstartsdato.";
+  if (!draft && !req(m.at_kode)) e.at_kode = "Påkrevd.";
+  if (!draft && !m.signert) e.signert = "Avtalen må være signert før innmelding.";
+
+  const ruteTomt = m.rute !== "A" && m.rute !== "B";
+  if (!(draft && ruteTomt)) {
+    if (ruteTomt) {
+      e.rute = "Velg rute A eller B.";
+    } else if (m.rute === "B") {
+      if (!/^[0-9]+([.,][0-9]+)?$/.test(String(m.paslag_ore_kwh ?? "").trim()))
+        e.paslag_ore_kwh = "Påslag i øre/kWh.";
+    } else if (m.rute === "A") {
+      // Valgfritt felt - fylles kun ut hvis man ønsker å registrere det nå.
+      // Valider formatet bare hvis noe faktisk er skrevet inn.
+      const fastArsprisTomt = !req(m.fast_aarspris);
+      if (!fastArsprisTomt && !/^[0-9]+$/.test(String(m.fast_aarspris ?? "").trim()))
+        e.fast_aarspris = "Fast årspris i kr.";
+    }
   }
   return e;
 }

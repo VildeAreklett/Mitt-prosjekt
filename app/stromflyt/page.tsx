@@ -304,7 +304,11 @@ export default function StromflytPage() {
     refresh();
   }
 
-  const errors = useMemo(() => validateMalepunkt(form), [form]);
+  // Redigering av en eksisterende rad skal ikke kreve at ALLE innmeldingsfelt
+  // (oppstart, referansekode, signert, rute) er utfylt - en Kladd skal kunne
+  // rettes opp litt etter litt. Kun ved ny manuell registrering (ikke
+  // redigering) kreves alt utfylt før man kan trykke "Registrer målepunkt".
+  const errors = useMemo(() => validateMalepunkt(form, { draft: !!editingId }), [form, editingId]);
   const isValid = Object.keys(errors).length === 0;
 
   const filtered = useMemo(() => {
@@ -936,15 +940,16 @@ export default function StromflytPage() {
     setShowAll(true);
     if (!isValid) { flash("Kan ikke meldes inn ennå"); return; }
     try {
+      const aarsforbrukTomt = form.aarsforbruk_kwh === undefined || form.aarsforbruk_kwh === null || String(form.aarsforbruk_kwh).trim() === "";
       const payload = {
         kunde: form.kunde!, org_nr: form.org_nr!, selger: form.selger?.trim() || "", cloud_org: form.cloud_org!,
         bygg: form.bygg!, adresse: form.adresse!, maalenummer: form.maalenummer!,
         maalepunkt_id: form.maalepunkt_id!, netteier: form.netteier!, prisomrade: form.prisomrade!,
-        aarsforbruk_kwh: Number(form.aarsforbruk_kwh), avtalt_oppstart: form.avtalt_oppstart!,
-        at_kode: form.at_kode!, rute: form.rute as Rute,
-        paslag_ore_kwh: form.rute === "B" ? Number(form.paslag_ore_kwh) : null,
+        aarsforbruk_kwh: aarsforbrukTomt ? null : Number(form.aarsforbruk_kwh), avtalt_oppstart: form.avtalt_oppstart || "",
+        at_kode: form.at_kode || "", rute: (form.rute || "") as Rute | "",
+        paslag_ore_kwh: form.rute === "B" && form.paslag_ore_kwh != null ? Number(form.paslag_ore_kwh) : null,
         fast_pr_maaler: form.fast_pr_maaler != null && form.fast_pr_maaler !== ("" as any) ? Number(form.fast_pr_maaler) : null,
-        fast_aarspris: form.rute === "A" ? Number(form.fast_aarspris) : null,
+        fast_aarspris: form.rute === "A" && form.fast_aarspris != null ? Number(form.fast_aarspris) : null,
         signert: !!form.signert, kommentar: form.kommentar ?? "",
       };
       if (editingId) {
@@ -1822,7 +1827,7 @@ export default function StromflytPage() {
                   </Field>
                 )}
                 {form.rute === "A" && (
-                  <Field label="Fast årspris leietakerfakturering (kr)" req err={errFor("fast_aarspris")}>
+                  <Field label="Fast årspris leietakerfakturering (kr, valgfritt)" err={errFor("fast_aarspris")}>
                     <input className="num" inputMode="numeric" value={form.fast_aarspris ?? ""} onChange={(e) => set("fast_aarspris", (e.target.value === "" ? null : Number(e.target.value)) as any)} />
                   </Field>
                 )}
