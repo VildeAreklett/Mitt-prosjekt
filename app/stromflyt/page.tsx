@@ -1837,7 +1837,7 @@ export default function StromflytPage() {
             <fieldset className="wide">
               <legend>Avtale</legend>
               <div className="grid2">
-                <Field label="AT-kode" req err={errFor("at_kode")}><input className="num" placeholder="f.eks. AT40001.001" value={form.at_kode ?? ""} onChange={(e) => set("at_kode", e.target.value)} /></Field>
+                <Field label="AT-kode (valgfritt - fylles inn når den er klar)" err={errFor("at_kode")}><input className="num" placeholder="f.eks. AT40001.001" value={form.at_kode ?? ""} onChange={(e) => set("at_kode", e.target.value)} /></Field>
                 <Field label="Avtalt oppstart" req err={errFor("avtalt_oppstart")}><input type="date" className="num" value={form.avtalt_oppstart ?? ""} onChange={(e) => set("avtalt_oppstart", e.target.value)} /></Field>
               </div>
               <Field label="Kommentar"><textarea rows={2} value={form.kommentar ?? ""} onChange={(e) => set("kommentar", e.target.value)} /></Field>

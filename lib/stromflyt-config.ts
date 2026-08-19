@@ -114,7 +114,8 @@ export function validateMalepunkt(m: Partial<Malepunkt>, opts?: { draft?: boolea
   if (!(draft && aarsforbrukTomt) && !/^[0-9]+$/.test(String(m.aarsforbruk_kwh ?? "").trim()))
     e.aarsforbruk_kwh = "Årsforbruk må være et helt tall (kWh).";
   if (!draft && !req(m.avtalt_oppstart)) e.avtalt_oppstart = "Velg oppstartsdato.";
-  if (!draft && !req(m.at_kode)) e.at_kode = "Påkrevd.";
+  // AT-kode er ofte ikke klar med en gang (tildeles internt etter hvert) og
+  // skal derfor aldri være obligatorisk - kan ettermeldes senere.
   if (!draft && !m.signert) e.signert = "Avtalen må være signert før innmelding.";
 
   const ruteTomt = m.rute !== "A" && m.rute !== "B";
