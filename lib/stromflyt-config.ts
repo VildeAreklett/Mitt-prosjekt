@@ -66,6 +66,12 @@ export interface Malepunkt {
   fast_aarspris: number | null;
   signert: boolean;
   kommentar: string;
+  // Overtas på eiers/leverandørens eksisterende vilkår (eierskifte), eller
+  // flyttes over på Adaptics egen spotavtale. Valgfritt - kan stå tomt til
+  // dette er avklart. Ved "Eierskifte" kan selve leverandøravtalen (PDF)
+  // lastes opp som dokumentasjon, se leverandoravtale_fil_sti.
+  avtaletype: "Eierskifte" | "Spotavtale" | "";
+  leverandoravtale_fil_sti: string | null;
   status: Status;
   entelios_ref: string;
   created_at?: string;

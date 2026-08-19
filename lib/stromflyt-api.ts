@@ -15,6 +15,7 @@ function tilDbRad<T extends Record<string, unknown>>(m: T): T {
   const rad = { ...m } as Record<string, unknown>;
   if (rad.avtalt_oppstart === "") rad.avtalt_oppstart = null;
   if (rad.rute === "") rad.rute = null;
+  if (rad.avtaletype === "") rad.avtaletype = null;
   return rad as T;
 }
 

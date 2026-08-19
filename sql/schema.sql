@@ -33,6 +33,10 @@ create table if not exists public.strombestillinger (
   -- avtale og status
   signert           boolean not null default false,
   kommentar         text not null default '',
+  -- overtas på eiers/leverandørens vilkår (eierskifte), eller flyttes over
+  -- på Adaptics egen spotavtale - se migration-007.
+  avtaletype              text check (avtaletype in ('Eierskifte', 'Spotavtale')),
+  leverandoravtale_fil_sti text,
   status            text not null default 'Innmeldt'
                       check (status in ('Kladd','Innmeldt','Klar for bestilling',
                                         'Sendt Entelios','Bekreftet','Satt opp i Cloud','Aktiv')),

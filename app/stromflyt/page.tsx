@@ -113,6 +113,7 @@ const emptyForm: Partial<Malepunkt> = {
   maalepunkt_id: "", netteier: "", prisomrade: "", aarsforbruk_kwh: null,
   avtalt_oppstart: "", at_kode: "", rute: "", paslag_ore_kwh: null,
   fast_pr_maaler: null, fast_aarspris: null, signert: false, kommentar: "",
+  avtaletype: "", leverandoravtale_fil_sti: null,
 };
 
 export default function StromflytPage() {
@@ -136,6 +137,8 @@ export default function StromflytPage() {
 
   const [form, setForm] = useState<Partial<Malepunkt>>({ ...emptyForm });
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [leverandoravtaleUploading, setLeverandoravtaleUploading] = useState(false);
+  const [leverandoravtaleUrl, setLeverandoravtaleUrl] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [lookup, setLookup] = useState<{ loading: boolean; msg: string }>({ loading: false, msg: "" });
   const [parsing, setParsing] = useState(false);
@@ -613,6 +616,8 @@ export default function StromflytPage() {
             r.usikre_felt.length ? `Usikre felt ved utlesing: ${r.usikre_felt.join(", ")} - bør bekreftes.` : "",
             !fakturaRute ? "Rute/oppstart/kommersielt ikke avklart ennå - fyll inn når avtalen er klar." : "",
           ].filter(Boolean).join(" "),
+          avtaletype: "",
+          leverandoravtale_fil_sti: null,
         }, fakturaRute ? "Innmeldt" : "Kladd");
         ok += 1;
       } catch (e: any) {
@@ -746,6 +751,8 @@ export default function StromflytPage() {
           fast_aarspris: mapping.rute === "A" ? Number(mapping.fast_aarspris) : null,
           signert: mapping.signert,
           kommentar: [r.kommentar, `Importert fra ${excelName} · ${excelSheet.name} rad ${r.source_row}`].filter(Boolean).join(" · "),
+          avtaletype: "",
+          leverandoravtale_fil_sti: null,
         }, r.status_suggestion);
         if (mapping.selger.trim()) await updateCustomerSeller(mapping.org_nr, mapping.selger);
         ok += 1;
@@ -795,6 +802,8 @@ export default function StromflytPage() {
           fast_aarspris: parsed.rute === "A" ? parsed.fast_aarspris : null,
           signert: parsed.avtale_signert,
           kommentar: `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
+          avtaletype: "",
+          leverandoravtale_fil_sti: null,
         });
         if (importSeller.trim()) await updateCustomerSeller(parsed.org_nr, importSeller);
         ok += 1;
@@ -896,6 +905,8 @@ export default function StromflytPage() {
     setTouched({});
     setShowAll(false);
     setTab("form");
+    setLeverandoravtaleUrl(null);
+    if (r.leverandoravtale_fil_sti) void refreshLeverandoravtaleUrl(r.leverandoravtale_fil_sti);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -905,6 +916,30 @@ export default function StromflytPage() {
     setTouched({});
     setShowAll(false);
     setTab("form");
+    setLeverandoravtaleUrl(null);
+  }
+
+  async function refreshLeverandoravtaleUrl(storagePath: string) {
+    const { data } = await supabase.storage.from("leverandoravtaler").createSignedUrl(storagePath, 60 * 10);
+    setLeverandoravtaleUrl(data?.signedUrl ?? null);
+  }
+
+  async function uploadLeverandoravtale(file: File) {
+    setLeverandoravtaleUploading(true);
+    try {
+      const trygtNavn = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const userId = (await supabase.auth.getUser()).data.user?.id || "ukjent";
+      const storagePath = `${userId}/${Date.now()}-${trygtNavn}`;
+      const { error: uploadError } = await supabase.storage.from("leverandoravtaler").upload(storagePath, file);
+      if (uploadError) throw new Error("Kunne ikke laste opp leverandøravtalen: " + uploadError.message);
+      setForm((f) => ({ ...f, leverandoravtale_fil_sti: storagePath }));
+      await refreshLeverandoravtaleUrl(storagePath);
+      flash("Leverandøravtale lastet opp");
+    } catch (e: any) {
+      flash("Feil: " + (e.message ?? e));
+    } finally {
+      setLeverandoravtaleUploading(false);
+    }
   }
 
   function setCustomerOrgNr(value: string) {
@@ -951,6 +986,8 @@ export default function StromflytPage() {
         fast_pr_maaler: form.fast_pr_maaler != null && form.fast_pr_maaler !== ("" as any) ? Number(form.fast_pr_maaler) : null,
         fast_aarspris: form.rute === "A" && form.fast_aarspris != null ? Number(form.fast_aarspris) : null,
         signert: !!form.signert, kommentar: form.kommentar ?? "",
+        avtaletype: (form.avtaletype || "") as Malepunkt["avtaletype"],
+        leverandoravtale_fil_sti: form.avtaletype === "Eierskifte" ? (form.leverandoravtale_fil_sti ?? null) : null,
       };
       if (editingId) {
         await updateMalepunktDetails(editingId, payload);
@@ -1835,6 +1872,39 @@ export default function StromflytPage() {
             </fieldset>
 
             <fieldset className="wide">
+              <legend>Overtakelse (valgfritt)</legend>
+              <div className="radio-row">
+                {(["Eierskifte", "Spotavtale"] as const).map((at) => (
+                  <label key={at} className="radio-card" data-on={form.avtaletype === at} onClick={() => set("avtaletype", form.avtaletype === at ? "" : at)}>
+                    <input type="radio" name="avtaletype" checked={form.avtaletype === at} readOnly />
+                    <b>{at === "Eierskifte" ? "Eierskifte · eiers vilkår" : "Over på vår spotavtale"}</b>
+                    <span>{at === "Eierskifte" ? "Overtar eksisterende leverandøravtale på samme vilkår som i dag." : "Kunden flyttes over på Adaptics egen spotavtale."}</span>
+                  </label>
+                ))}
+              </div>
+              {form.avtaletype === "Eierskifte" && (
+                <div className="field" style={{ marginTop: 14 }}>
+                  <label>Leverandøravtale (PDF, valgfritt)</label>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    disabled={leverandoravtaleUploading}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLeverandoravtale(f); }}
+                  />
+                  {leverandoravtaleUploading && <span className="muted">Laster opp …</span>}
+                  {!leverandoravtaleUploading && form.leverandoravtale_fil_sti && (
+                    <span className="muted">
+                      Lastet opp.{" "}
+                      {leverandoravtaleUrl
+                        ? <a href={leverandoravtaleUrl} target="_blank" rel="noreferrer">Åpne leverandøravtale</a>
+                        : "Henter lenke …"}
+                    </span>
+                  )}
+                </div>
+              )}
+            </fieldset>
+
+            <fieldset className="wide">
               <legend>Avtale</legend>
               <div className="grid2">
                 <Field label="AT-kode (valgfritt - fylles inn når den er klar)" err={errFor("at_kode")}><input className="num" placeholder="f.eks. AT40001.001" value={form.at_kode ?? ""} onChange={(e) => set("at_kode", e.target.value)} /></Field>
@@ -1873,6 +1943,12 @@ export default function StromflytPage() {
               <button className="icon-btn" aria-label="Lukk" onClick={() => setBatchOpen(false)}>✕</button>
             </div>
             <div className="bd">
+              {batchRows.length > 0 && (
+                <div className="hint" style={{ marginBottom: 12, fontSize: 13, color: "var(--sf-ink-2)" }}>
+                  E-postutkastet kan ikke få vedlegget automatisk lagt ved (teknisk begrensning i mailto-lenker) - gjør derfor i denne rekkefølgen:
+                  {" "}<b>1)</b> «Last ned Excel», <b>2)</b> «Åpne mailutkast», <b>3)</b> dra den nedlastede filen inn i utkastet som vedlegg.
+                </div>
+              )}
               {batchRows.length === 0 ? (
                 <div className="empty">Ingen målepunkt har status «Klar til Entelios». Sett en internt registrert post videre først.</div>
               ) : (
