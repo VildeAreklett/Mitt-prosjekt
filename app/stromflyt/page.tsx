@@ -107,8 +107,10 @@ const REG_COLUMNS: { key: string; label: string }[] = [
   { key: "netteier", label: "Netteier" },
   { key: "prisomrade", label: "Prisområde" },
   { key: "aarsforbruk_kwh", label: "Årsforbruk" },
+  { key: "avtalt_oppstart", label: "Oppstartsdato" },
   { key: "rute", label: "Rute" },
   { key: "kommersielt", label: "Kommersielt" },
+  { key: "avtaletype", label: "Overtakelse" },
   { key: "status", label: "Status" },
 ];
 const REG_COLUMNS_STORAGE_KEY = "stromflyt_synlige_kolonner";
@@ -381,7 +383,10 @@ export default function StromflytPage() {
     const b = rows.filter((r) => r.rute === "B").length;
     const arr = rows.filter((r) => r.rute === "A").reduce((s, r) => s + (Number(r.fast_aarspris) || 0), 0);
     const trenger = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length;
-    return { total: rows.length, a, b, arr, trenger };
+    const eierskifte = rows.filter((r) => r.avtaletype === "Eierskifte").length;
+    const spotavtale = rows.filter((r) => r.avtaletype === "Spotavtale").length;
+    const ikkeAvklart = rows.filter((r) => !r.avtaletype).length;
+    return { total: rows.length, a, b, arr, trenger, eierskifte, spotavtale, ikkeAvklart };
   }, [rows]);
 
   function set<K extends keyof Malepunkt>(k: K, v: Malepunkt[K]) {
@@ -1135,6 +1140,7 @@ export default function StromflytPage() {
       { label: "Oppstart", value: (r) => r.avtalt_oppstart || "" },
       { label: "Netteier", value: (r) => r.netteier },
       { label: "Årsforbruk (kWh)", value: (r) => r.aarsforbruk_kwh ?? "" },
+      { label: "Overtakelse", value: (r) => r.avtaletype || "" },
       { label: "Kommentar", value: (r) => r.kommentar || "" },
     ];
     // Full eksport uavhengig av kolonnevisningen på skjermen - dette er ment
@@ -1336,6 +1342,7 @@ export default function StromflytPage() {
               <Tile k="Rute A / B" v={`${tiles.a} / ${tiles.b}`} sub="leietaker / strømsalg" />
               <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
               <Tile k="Trenger behandling" v={String(tiles.trenger)} sub="før sending til Entelios" alert={tiles.trenger > 0} />
+              <Tile k="Eierskifte / Spotavtale" v={`${tiles.eierskifte} / ${tiles.spotavtale}`} sub={`${tiles.ikkeAvklart} ikke avklart ennå`} alert={tiles.ikkeAvklart > 0} />
             </div>
 
             <div className="overview-section-heading">
@@ -1428,8 +1435,10 @@ export default function StromflytPage() {
                   {visibleCols.netteier && <th>Netteier</th>}
                   {visibleCols.prisomrade && <th>Prisomr.</th>}
                   {visibleCols.aarsforbruk_kwh && <th className="num">Årsforbruk</th>}
+                  {visibleCols.avtalt_oppstart && <th>Oppstartsdato</th>}
                   {visibleCols.rute && <th>Rute</th>}
                   {visibleCols.kommersielt && <th>Kommersielt</th>}
+                  {visibleCols.avtaletype && <th>Overtakelse</th>}
                   {visibleCols.status && <th>Status</th>}
                   <th>Handling</th>
                 </tr></thead>
@@ -1449,8 +1458,10 @@ export default function StromflytPage() {
                         {visibleCols.netteier && <td>{r.netteier}</td>}
                         {visibleCols.prisomrade && <td>{r.prisomrade}</td>}
                         {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}</td>}
+                        {visibleCols.avtalt_oppstart && <td>{r.avtalt_oppstart || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.rute && <td><span className={"rute " + r.rute}>{r.rute}</span></td>}
                         {visibleCols.kommersielt && <td>{kommersielt(r)}</td>}
+                        {visibleCols.avtaletype && <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.status && <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>}
                         <td>
                           <select
