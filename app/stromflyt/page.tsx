@@ -90,7 +90,10 @@ type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   { key: "", label: "Alle", statuses: [] },
-  { key: "handling", label: "Trenger behandling", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
+  // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
+  // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
+  // samlekø for "dette gjenstår å sende inn".
+  { key: "handling", label: "Ikke meldt inn", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
   { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
@@ -332,7 +335,15 @@ export default function StromflytPage() {
         && (!q || text.includes(q));
     });
     return [...result].sort((a, b) => {
-      if (sortKey === "oppstart") return (a.avtalt_oppstart || "9999").localeCompare(b.avtalt_oppstart || "9999");
+      if (sortKey === "oppstart") {
+        // Nyeste oppstartsdato først. Rader uten oppstartsdato satt havner
+        // alltid sist, uansett sorteringsretning - ikke helt øverst som om
+        // "ikke satt" var en dato i fremtiden.
+        if (!a.avtalt_oppstart && !b.avtalt_oppstart) return 0;
+        if (!a.avtalt_oppstart) return 1;
+        if (!b.avtalt_oppstart) return -1;
+        return b.avtalt_oppstart.localeCompare(a.avtalt_oppstart);
+      }
       if (sortKey === "kunde") return a.kunde.localeCompare(b.kunde, "nb");
       if (sortKey === "status") return STAGES.indexOf(a.status) - STAGES.indexOf(b.status);
       if (sortKey === "nyeste") return String(b.created_at || "").localeCompare(String(a.created_at || ""));
@@ -1348,7 +1359,7 @@ export default function StromflytPage() {
               <Tile k="Målepunkt totalt" v={String(tiles.total)} />
               <Tile k="Rute A / B" v={`${tiles.a} / ${tiles.b}`} sub="leietaker / strømsalg" />
               <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
-              <Tile k="Trenger behandling" v={String(tiles.trenger)} sub="før sending til Entelios" alert={tiles.trenger > 0} />
+              <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile k="Eierskifte / Spotavtale" v={`${tiles.eierskifte} / ${tiles.spotavtale}`} sub={`${tiles.ikkeAvklart} ikke avklart ennå`} alert={tiles.ikkeAvklart > 0} />
             </div>
 
@@ -1389,7 +1400,7 @@ export default function StromflytPage() {
               <label className="flt">Sorter
                 <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
                   <option value="arbeidsrekkefolge">arbeidsrekkefølge</option>
-                  <option value="oppstart">oppstartsdato</option>
+                  <option value="oppstart">oppstartsdato (nyeste først)</option>
                   <option value="kunde">kunde A–Å</option>
                   <option value="status">status</option>
                   <option value="nyeste">nyeste først</option>
