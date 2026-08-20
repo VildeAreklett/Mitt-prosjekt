@@ -66,11 +66,16 @@ const STATUS_CLASS: Record<Status, string> = {
 };
 
 const shortStage = (s: string) =>
-  displayStatus(s).replace("Sendt Entelios", "Sendt").replace("Satt opp i Cloud", "Cloud");
+  displayStatus(s).replace("Sendt Entelios", "Sendt").replace("Satt opp i Cloud", "Cloud")
+    .replace("Registrert hos Entelios", "Hos Entelios");
 
 const displayStatus = (s: string) => {
   if (s === "Innmeldt") return "Registrert internt";
   if (s === "Klar for bestilling") return "Klar til Entelios";
+  // "Bekreftet" (DB-verdien, urørt) vises som "Registrert hos Entelios" - et
+  // tydeligere motstykke til "Registrert internt" (Innmeldt), og unngår at
+  // "Bekreftet" leses som et vagt mellomsteg.
+  if (s === "Bekreftet") return "Registrert hos Entelios";
   return s;
 };
 
@@ -87,7 +92,7 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   { key: "", label: "Alle", statuses: [] },
   { key: "handling", label: "Trenger behandling", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
-  { key: "klar-cloud", label: "Bekreftet · klar for Cloud", statuses: ["Bekreftet"] },
+  { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
 ];
@@ -1351,7 +1356,7 @@ export default function StromflytPage() {
           <section>
             <div className="worklist-heading">
               <div><h1>Arbeidsliste</h1><span>{filtered.length} målepunkt i valgt kø</span></div>
-              <button className="btn primary" onClick={() => setBatchOpen(true)}>Klargjør sending til Entelios</button>
+              <button className="btn primary" onClick={() => setBatchOpen(true)}>Merk som sendt til Entelios</button>
             </div>
 
             <div className="toolbar work-toolbar">
@@ -1933,7 +1938,7 @@ export default function StromflytPage() {
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setBatchOpen(false); }}>
           <div className="modal" role="dialog" aria-modal="true">
             <div className="hd">
-              <h2>Klargjør sending til Entelios</h2>
+              <h2>Merk som sendt til Entelios</h2>
               <span className="sub" style={{ color: "var(--sf-ink-3)", fontSize: 13 }}>{batchRows.length} målepunkt klare</span>
               <span style={{ flex: 1 }} />
               <button className="btn sm" disabled={!batchRows.length} onClick={copyBatch}>Kopier</button>
@@ -2069,6 +2074,11 @@ const CSS = `
 .sidenav{position:sticky;top:64px;align-self:start;min-height:calc(100vh - 64px);background:var(--sf-surface);border-right:1px solid var(--sf-border);padding:16px 12px 24px;display:flex;flex-direction:column;gap:2px}
 .sidenav-merke{color:var(--sf-ink-3);font-size:10.5px;font-weight:700;letter-spacing:.09em;padding:10px 10px 6px}
 .sidenav button{font:inherit;border:1px solid transparent;background:transparent;color:var(--sf-ink-2);height:38px;padding:0 10px;justify-content:flex-start;display:flex;align-items:center;gap:8px;width:100%;font-weight:550;border-radius:8px;cursor:pointer}
+/* Fast høyde (38px) på knappene betyr at en lang etikett som brekker over to
+   linjer flyter utenfor knappen og ser ut som et underpunkt av raden over -
+   sett i praksis med "Bekreftet · klar for Cloud". Ett-linjes tekst med
+   avkorting løser det uansett hvor lang etiketten senere blir. */
+.sidenav button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .sidenav button:hover{background:var(--sf-surface-2)}
 .sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
 .sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:var(--sf-surface-2);color:var(--sf-ink-2);border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
