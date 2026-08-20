@@ -73,6 +73,18 @@ export async function updateStatuses(ids: string[], status: Status, onlyFrom?: S
   if (error) throw error;
 }
 
+// Setter overtakelsestype (Eierskifte/Spotavtale) på flere målepunkt samtidig -
+// f.eks. når en hel kundes anlegg er avklart til å gå på samme spotavtale,
+// i stedet for å måtte redigere hver rad enkeltvis.
+export async function updateAvtaletype(ids: string[], avtaletype: Malepunkt["avtaletype"]): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from(TABLE)
+    .update(tilDbRad({ avtaletype }))
+    .in("id", ids);
+  if (error) throw error;
+}
+
 export async function updateMalepunktDetails(
   id: string,
   patch: Partial<Omit<Malepunkt, "id" | "created_at" | "updated_at">>,

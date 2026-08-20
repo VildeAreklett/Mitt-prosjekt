@@ -28,6 +28,7 @@ import {
   insertMalepunktWithStatus,
   updateStatus,
   updateStatuses,
+  updateAvtaletype,
   updateMalepunktDetails,
   updateCustomerSeller,
   deleteMalepunkt,
@@ -1061,6 +1062,19 @@ export default function StromflytPage() {
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
 
+  // Sett Eierskifte/Spotavtale på alle valgte rader samtidig - typisk brukt
+  // når en hel kundes anlegg (f.eks. alle Bergensgruppen-målerne) avklares
+  // til å gå på samme overtakelsestype, i stedet for å redigere hver rad.
+  async function setSelectedAvtaletype(avtaletype: "Eierskifte" | "Spotavtale") {
+    const ids = selectedRowsForBulk.map((r) => r.id);
+    if (!ids.length) return;
+    try {
+      await updateAvtaletype(ids, avtaletype);
+      await refresh();
+      flash(`${ids.length} målepunkt satt til «${avtaletype === "Eierskifte" ? "Eierskifte · eiers vilkår" : "Over på vår spotavtale"}»`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
   // Samme regel som enkeltrad-slett: kun det som ikke er sendt til Entelios
   // ennå kan fjernes - unngår at noen ved et uhell slår sammen dette med
   // sletting av noe som allerede er ute av huset.
@@ -1433,6 +1447,8 @@ export default function StromflytPage() {
               <b>{selectedRowsForBulk.length} valgt</b>
               <span>{selectedRegisteredIds.length} kan settes som klare til Entelios · {selectedDeletableIds.length} kan slettes</span>
               <span className="grow" />
+              <button className="btn sm" onClick={() => setSelectedAvtaletype("Eierskifte")}>Sett {selectedRowsForBulk.length} som Eierskifte</button>
+              <button className="btn sm" onClick={() => setSelectedAvtaletype("Spotavtale")}>Sett {selectedRowsForBulk.length} som Spotavtale</button>
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
                 Slett {selectedDeletableIds.length || "valgte"}
