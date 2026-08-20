@@ -811,7 +811,10 @@ export default function StromflytPage() {
           fast_pr_maaler: parsed.fast_pr_maaler,
           fast_aarspris: parsed.rute === "A" ? parsed.fast_aarspris : null,
           signert: parsed.avtale_signert,
-          kommentar: `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
+          kommentar: [
+            `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
+            parsed.kommentar_forslag || "",
+          ].filter(Boolean).join(" | "),
           avtaletype: "",
           leverandoravtale_fil_sti: null,
         });
@@ -859,7 +862,11 @@ export default function StromflytPage() {
           avtalt_oppstart: existing.avtalt_oppstart || parsed.avtalt_oppstart || "",
           at_kode: existing.at_kode || (rowAtCodes[index] || "").trim(),
           signert: existing.signert || parsed.avtale_signert,
-          kommentar: [existing.kommentar, `Oppdatert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`].filter(Boolean).join(" | "),
+          kommentar: [
+            existing.kommentar,
+            `Oppdatert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
+            parsed.kommentar_forslag || "",
+          ].filter(Boolean).join(" | "),
         });
         ok += 1;
       } catch (e: any) {
@@ -1536,6 +1543,11 @@ export default function StromflytPage() {
                     <span>Lagres på kunden og brukes på alle målepunktene i denne avtalen.</span>
                   </div>
                   {parsed.note && <div className="banner" style={{ margin: "0 18px 18px" }}>{parsed.note}</div>}
+                  {parsed.kommentar_forslag && (
+                    <div className="banner" style={{ margin: "0 18px 18px", color: "var(--sf-accent)", background: "var(--sf-accent-soft)" }}>
+                      <b>Verdt å vite:</b> {parsed.kommentar_forslag}
+                    </div>
+                  )}
                   {!parsed.avtale_signert && <div className="banner" style={{ margin: "0 18px 18px" }}>Avtalen ser ikke ferdig signert ut. Du kan kontrollere funnene, men ikke lagre dem ennå.</div>}
                 </div>
 
