@@ -996,6 +996,26 @@ export default function StromflytPage() {
     if (action === "edit") startEdit(r);
     if (action === "history") void showHistory(r);
     if (action === "delete") void remove(r);
+    if (action === "sjekk-cloud") void sjekkICloud(r);
+  }
+
+  // Slår opp i det ekte Adaptic Cloud API-et (ikke MCP) om måleren allerede
+  // finnes der - se app/api/cloud/sjekk-malepunkt/route.ts.
+  async function sjekkICloud(r: Malepunkt) {
+    flash("Sjekker i Cloud …");
+    try {
+      const headers = await stromflytAuthHeaders();
+      const res = await fetch(`/api/cloud/sjekk-malepunkt?malepunkt_id=${r.maalepunkt_id}`, { headers });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Ukjent feil");
+      if (!data.funnet) {
+        flash(`${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
+      } else {
+        flash(`${r.bygg}: funnet i Cloud - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}`);
+      }
+    } catch (e: any) {
+      flash("Feil ved Cloud-oppslag: " + (e.message ?? e));
+    }
   }
 
   async function showHistory(r: Malepunkt) {
@@ -1522,6 +1542,7 @@ export default function StromflytPage() {
                             {next && <option value="advance">→ Sett som {shortStage(next)}</option>}
                             {previous && <option value="back">← Flytt tilbake til {shortStage(previous)}</option>}
                             <option value="edit">Rediger</option>
+                            <option value="sjekk-cloud">Sjekk i Cloud</option>
                             <option value="history">Vis historikk</option>
                             {(r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling") && <option value="delete">Slett</option>}
                           </select>
