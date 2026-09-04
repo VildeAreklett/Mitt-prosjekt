@@ -1005,11 +1005,12 @@ export default function StromflytPage() {
     flash("Sjekker i Cloud …");
     try {
       const headers = await stromflytAuthHeaders();
-      const res = await fetch(`/api/cloud/sjekk-malepunkt?malepunkt_id=${r.maalepunkt_id}`, { headers });
+      const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "" });
+      const res = await fetch(`/api/cloud/sjekk-malepunkt?${qs.toString()}`, { headers });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Ukjent feil");
       if (!data.funnet) {
-        flash(`${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
+        flash(data.merknad ? `${r.bygg}: ${data.merknad}` : `${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
       } else {
         flash(`${r.bygg}: funnet i Cloud - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}`);
       }

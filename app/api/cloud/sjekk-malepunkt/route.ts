@@ -5,12 +5,20 @@ import { requireStromflytAccess } from "../../../../lib/server-auth";
 // Adaptic Cloud, via det ekte Adaptic Cloud API-et (ikke MCP - dette kjører
 // i selve appen). Kun lesing, ingen skriving.
 //
-// Adaptic Cloud sitt /v0/metrics-endepunkt returnerer alle målere for
-// organisasjonen API-nøkkelen er knyttet til (pluss eventuelle underorg.),
-// uten mulighet til å søke direkte på MålepunktID server-side - så vi henter
-// hele listen og filtrerer selv her. Se apiserver (Adaptic Cloud) sin
-// MetricController.findMetrics og AuthenticationSchemeConverter for hvordan
-// X-Api-Key-autentisering og modellen for svaret er bygget opp.
+// To autentiseringsmåter støttes (Håkon Wardeberg, sept. 2026):
+// 1) ADAPTIC_CLOUD_ADMIN_TOKEN (foretrukket) - et internt admin-token som
+//    kan "minte" et kortlevd, organisasjonsbundet token via
+//    POST /v0/internal/organizations/{orgId}/internal_token. Vi henter
+//    organisasjonslisten (GET /v0/internal/organizations), matcher på
+//    cloud_org-navnet fra Strømflyt-raden, minter et ferskt token for akkurat
+//    den organisasjonen, og bruker det til å slå opp målere. Litt mer arbeid
+//    per kall, men fungerer på tvers av alle kunde-organisasjoner uten at én
+//    enkelt nøkkel må ha bred tilgang.
+// 2) ADAPTIC_CLOUD_API_KEY (fallback) - en enkel, statisk X-Api-Key. Enklere,
+//    men forutsetter at nøkkelen selv har lesetilgang til riktig organisasjon.
+//
+// Se apiserver (Adaptic Cloud) sin InternalOrganizationsController og
+// MetricController for hvordan dette er bygget opp der.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,32 +40,90 @@ interface CloudMetric {
   building?: { id: string; name: string; address?: string };
 }
 
+interface CloudOrg {
+  id: string;
+  name: string;
+}
+
+async function mintOrgToken(adminToken: string, organizationId: string): Promise<string> {
+  const res = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations/${organizationId}/internal_token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ writeAccess: false }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Kunne ikke lage midlertidig token for organisasjonen (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as { token: string };
+  return data.token;
+}
+
+async function findOrganizationId(adminToken: string, cloudOrgName: string): Promise<string | null> {
+  const res = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations`, {
+    headers: { Authorization: `Bearer ${adminToken}`, Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Kunne ikke hente organisasjonsliste (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const orgs = (await res.json()) as CloudOrg[];
+  const needle = cloudOrgName.trim().toLowerCase();
+  const treff = orgs.find((o) => o.name.trim().toLowerCase() === needle);
+  return treff?.id ?? null;
+}
+
 export async function GET(req: Request) {
   const auth = await requireStromflytAccess(req);
   if (!auth.ok) {
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }
 
-  const apiKey = process.env.ADAPTIC_CLOUD_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { ok: false, error: "Mangler ADAPTIC_CLOUD_API_KEY. Sett den i Vercel (og .env.local lokalt)." },
-      { status: 500 },
-    );
-  }
-
   const url = new URL(req.url);
   const malepunktId = (url.searchParams.get("malepunkt_id") || "").replace(/\D/g, "");
+  const cloudOrgName = url.searchParams.get("cloud_org") || "";
   if (malepunktId.length !== 18) {
     return NextResponse.json({ ok: false, error: "malepunkt_id må være 18 siffer" }, { status: 400 });
   }
 
+  const adminToken = process.env.ADAPTIC_CLOUD_ADMIN_TOKEN;
+  const apiKey = process.env.ADAPTIC_CLOUD_API_KEY;
+
   try {
-    const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, {
-      headers: { "X-Api-Key": apiKey, Accept: "application/json" },
-      // Ingen cache - status i Cloud kan endre seg når som helst.
-      cache: "no-store",
-    });
+    let metricsHeaders: HeadersInit;
+
+    if (adminToken) {
+      if (!cloudOrgName) {
+        return NextResponse.json(
+          { ok: false, error: "Mangler cloud_org - kan ikke slå opp riktig organisasjon i Cloud." },
+          { status: 400 },
+        );
+      }
+      const organizationId = await findOrganizationId(adminToken, cloudOrgName);
+      if (!organizationId) {
+        return NextResponse.json({
+          ok: true,
+          funnet: false,
+          merknad: `Fant ingen organisasjon i Cloud som heter «${cloudOrgName}» - sjekk at cloud_org-feltet matcher navnet i Cloud nøyaktig.`,
+        });
+      }
+      const orgToken = await mintOrgToken(adminToken, organizationId);
+      metricsHeaders = { Authorization: `Bearer ${orgToken}`, Accept: "application/json" };
+    } else if (apiKey) {
+      metricsHeaders = { "X-Api-Key": apiKey, Accept: "application/json" };
+    } else {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Mangler ADAPTIC_CLOUD_ADMIN_TOKEN eller ADAPTIC_CLOUD_API_KEY. Sett én av dem i Vercel.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, { headers: metricsHeaders, cache: "no-store" });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`Adaptic Cloud API svarte ${res.status}: ${body.slice(0, 300)}`);
