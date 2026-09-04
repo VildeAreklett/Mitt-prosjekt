@@ -169,6 +169,12 @@ export async function GET(req: Request) {
     if (!treff) {
       return NextResponse.json({ ok: true, funnet: false });
     }
+    // Grov tilnærming til "i drift": en hovedmåler (mainImported) med en
+    // tilknyttet tsdb_id har en reell datatilkobling satt opp. Dette
+    // bekrefter IKKE at det faktisk kommer ferske måleverdier akkurat nå
+    // (det krever et eget oppslag mot måleverdiene selv) - kun at
+    // oppkoblingen finnes.
+    const iDrift = !!treff.mainImported && !!treff.currentMeter?.tsdbId;
     return NextResponse.json({
       ok: true,
       funnet: true,
@@ -177,6 +183,7 @@ export async function GET(req: Request) {
       malenummer: treff.currentMeter?.serial ?? null,
       tsdb_id: treff.currentMeter?.tsdbId ?? null,
       hovedmaaler: !!treff.mainImported,
+      foreslatt_status: iDrift ? "Aktiv" : "Satt opp i Cloud",
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "ukjent feil";

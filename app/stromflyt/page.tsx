@@ -282,7 +282,14 @@ export default function StromflytPage() {
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setLoading(false); }
   }
-  function flash(m: string) { setToast(m); window.setTimeout(() => setToast(""), 2400); }
+  function flash(m: string) {
+    setToast(m);
+    // Lengre meldinger (f.eks. feilmeldinger med detaljer) trenger mer tid
+    // til å bli lest enn en kort bekreftelse - varier visningstiden med
+    // tekstlengden i stedet for én fast, ofte for kort, varighet.
+    const varighet = Math.min(9000, Math.max(3000, m.length * 60));
+    window.setTimeout(() => setToast(""), varighet);
+  }
 
   async function stromflytAuthHeaders(): Promise<HeadersInit> {
     const { data } = await supabase.auth.getSession();
@@ -1011,9 +1018,20 @@ export default function StromflytPage() {
       if (!res.ok || !data.ok) throw new Error(data.error || "Ukjent feil");
       if (!data.funnet) {
         flash(data.merknad ? `${r.bygg}: ${data.merknad}` : `${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
-      } else {
-        flash(`${r.bygg}: funnet i Cloud - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}`);
+        return;
       }
+      // Flytter status fremover automatisk basert på hva som faktisk finnes i
+      // Cloud, ALDRI bakover - en rad som allerede er lenger fremme i egen
+      // oppfølging (f.eks. manuelt satt til Aktiv) skal ikke reverseres bare
+      // fordi datatilkoblingen ikke kunne bekreftes her.
+      const foreslatt = data.foreslatt_status as Status | undefined;
+      let statusMelding = "";
+      if (foreslatt && STAGES.indexOf(foreslatt) > STAGES.indexOf(r.status)) {
+        await updateStatus(r.id, foreslatt);
+        await refresh();
+        statusMelding = ` → satt til «${displayStatus(foreslatt)}»`;
+      }
+      flash(`${r.bygg}: funnet i Cloud - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`);
     } catch (e: any) {
       flash("Feil ved Cloud-oppslag: " + (e.message ?? e));
     }
@@ -2271,7 +2289,7 @@ td .muted{color:var(--sf-ink-3)}
 .modal .hd h2{font-size:16px}
 .modal .bd{padding:18px 20px}
 .history-modal{max-width:680px}.history-event{display:grid;grid-template-columns:14px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--sf-border)}.history-event:last-child{border-bottom:0}.history-dot{width:9px;height:9px;border-radius:50%;background:var(--sf-accent);margin-top:7px}.history-event b{font-size:14px}.history-event small{display:block;color:var(--sf-ink-3);margin-top:3px}.history-event .muted{font-size:13px;color:var(--sf-ink-2)}
-.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-ink);color:var(--sf-ground);padding:10px 18px;border-radius:999px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-ink);color:var(--sf-ground);padding:10px 18px;border-radius:14px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none;max-width:520px;white-space:normal;text-align:center;line-height:1.4}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}.brand-panel p{display:none}.topbar{grid-template-columns:auto minmax(0,1fr) auto}}
 @media (max-width:900px){
