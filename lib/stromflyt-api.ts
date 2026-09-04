@@ -106,6 +106,17 @@ export async function updateCustomerSeller(orgNr: string, selger: string): Promi
   if (error) throw error;
 }
 
+// Kontaktperson hos kunden hører til kunden, ikke det enkelte målepunktet -
+// samme prinsipp som selger. Oppdater derfor alle poster med samme
+// organisasjonsnummer samtidig.
+export async function updateCustomerKontaktperson(orgNr: string, navn: string, epost: string): Promise<void> {
+  const { error } = await supabase
+    .from(TABLE)
+    .update({ kontaktperson_navn: navn.trim(), kontaktperson_epost: epost.trim() })
+    .eq("org_nr", orgNr);
+  if (error) throw error;
+}
+
 export interface HistoryEvent {
   id: string;
   action: "opprettet" | "endret" | "slettet";

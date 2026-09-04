@@ -8,6 +8,10 @@ create table if not exists public.strombestillinger (
   kunde             text not null,
   org_nr            text not null check (org_nr ~ '^[0-9]{9}$'),
   selger            text not null default '',
+  -- kontaktperson hos kunden - skal med i innmeldingen til Entelios slik at
+  -- driftsmeldinger går direkte dit, ikke bare til Adaptics sentrale e-post.
+  kontaktperson_navn  text not null default '',
+  kontaktperson_epost text not null default '',
   cloud_org         text not null,
 
   -- anlegg

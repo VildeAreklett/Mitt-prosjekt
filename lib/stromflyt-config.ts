@@ -50,6 +50,11 @@ export interface Malepunkt {
   kunde: string;
   org_nr: string;
   selger: string;
+  // Kontaktperson hos kunden (ikke Adaptic) - skal med i innmeldingen til
+  // Entelios slik at driftsmeldinger (elkontroll o.l.) går direkte dit.
+  // Valgfritt, gjelder hele kunden - samme prinsipp som selger.
+  kontaktperson_navn: string;
+  kontaktperson_epost: string;
   cloud_org: string;
   bygg: string;
   adresse: string;
@@ -166,6 +171,8 @@ export const ENTELIOS_COLUMNS: { key: keyof Malepunkt; label: string }[] = [
   { key: "netteier", label: "Netteier" },
   { key: "aarsforbruk_kwh", label: "Årsforbruk (kWh)" },
   { key: "avtalt_oppstart", label: "Oppstartdato" },
+  { key: "kontaktperson_navn", label: "Kontaktperson" },
+  { key: "kontaktperson_epost", label: "Kontakt e-post" },
   { key: "kommentar", label: "Kommentar" },
 ];
 

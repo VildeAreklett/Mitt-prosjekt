@@ -31,6 +31,7 @@ import {
   updateAvtaletype,
   updateMalepunktDetails,
   updateCustomerSeller,
+  updateCustomerKontaktperson,
   deleteMalepunkt,
   listHistory,
   markBatchSent,
@@ -125,6 +126,7 @@ const emptyForm: Partial<Malepunkt> = {
   avtalt_oppstart: "", at_kode: "", rute: "", paslag_ore_kwh: null,
   fast_pr_maaler: null, fast_aarspris: null, signert: false, kommentar: "",
   avtaletype: "", leverandoravtale_fil_sti: null,
+  kontaktperson_navn: "", kontaktperson_epost: "",
 };
 
 export default function StromflytPage() {
@@ -640,6 +642,8 @@ export default function StromflytPage() {
           ].filter(Boolean).join(" "),
           avtaletype: "",
           leverandoravtale_fil_sti: null,
+          kontaktperson_navn: "",
+          kontaktperson_epost: "",
         }, fakturaRute ? "Innmeldt" : "Kladd");
         ok += 1;
       } catch (e: any) {
@@ -775,6 +779,8 @@ export default function StromflytPage() {
           kommentar: [r.kommentar, `Importert fra ${excelName} · ${excelSheet.name} rad ${r.source_row}`].filter(Boolean).join(" · "),
           avtaletype: "",
           leverandoravtale_fil_sti: null,
+          kontaktperson_navn: "",
+          kontaktperson_epost: "",
         }, r.status_suggestion);
         if (mapping.selger.trim()) await updateCustomerSeller(mapping.org_nr, mapping.selger);
         ok += 1;
@@ -829,6 +835,8 @@ export default function StromflytPage() {
           ].filter(Boolean).join(" | "),
           avtaletype: "",
           leverandoravtale_fil_sti: null,
+          kontaktperson_navn: "",
+          kontaktperson_epost: "",
         });
         if (importSeller.trim()) await updateCustomerSeller(parsed.org_nr, importSeller);
         ok += 1;
@@ -1017,13 +1025,19 @@ export default function StromflytPage() {
         signert: !!form.signert, kommentar: form.kommentar ?? "",
         avtaletype: (form.avtaletype || "") as Malepunkt["avtaletype"],
         leverandoravtale_fil_sti: form.avtaletype === "Eierskifte" ? (form.leverandoravtale_fil_sti ?? null) : null,
+        kontaktperson_navn: form.kontaktperson_navn?.trim() || "",
+        kontaktperson_epost: form.kontaktperson_epost?.trim() || "",
       };
       if (editingId) {
         await updateMalepunktDetails(editingId, payload);
         await updateCustomerSeller(payload.org_nr, payload.selger);
+        await updateCustomerKontaktperson(payload.org_nr, payload.kontaktperson_navn, payload.kontaktperson_epost);
       } else {
         await insertMalepunkt(payload);
         if (payload.selger) await updateCustomerSeller(payload.org_nr, payload.selger);
+        if (payload.kontaktperson_navn || payload.kontaktperson_epost) {
+          await updateCustomerKontaktperson(payload.org_nr, payload.kontaktperson_navn, payload.kontaktperson_epost);
+        }
       }
       const bygg = form.bygg;
       const wasEditing = !!editingId;
@@ -1842,6 +1856,12 @@ export default function StromflytPage() {
               </Field>
               <Field label="Selger" hint="Gjelder hele kunden. Endring oppdaterer alle kundens målepunkter.">
                 <input value={form.selger ?? ""} onChange={(e) => set("selger", e.target.value)} placeholder="Navn på ansvarlig selger" />
+              </Field>
+              <Field label="Kontaktperson hos kunde (valgfritt)" hint="Sendes med i innmeldingen til Entelios, slik at driftsmeldinger (elkontroll o.l.) går direkte dit i stedet for kun til Adaptic sentralt. Gjelder hele kunden.">
+                <input value={form.kontaktperson_navn ?? ""} onChange={(e) => set("kontaktperson_navn", e.target.value)} placeholder="Navn" />
+              </Field>
+              <Field label="Kontaktperson e-post (valgfritt)">
+                <input type="email" value={form.kontaktperson_epost ?? ""} onChange={(e) => set("kontaktperson_epost", e.target.value)} placeholder="navn@kunde.no" />
               </Field>
               <Field label="Kunde/organisasjon for strømregistreringen" req err={errFor("cloud_org")} hint="Velg bare relevant strøm-/kundeorganisasjon. Ikke hele Cloud-listen skal inn her.">
                 <select value={form.cloud_org ?? ""} onChange={(e) => set("cloud_org", e.target.value)}>
