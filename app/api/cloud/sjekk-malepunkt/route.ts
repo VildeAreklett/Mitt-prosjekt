@@ -60,7 +60,27 @@ async function mintOrgToken(adminToken: string, organizationId: string): Promise
   return data.token;
 }
 
-async function findOrganizationId(adminToken: string, cloudOrgName: string): Promise<string | null> {
+// Normaliserer et organisasjonsnavn for sammenligning: små bokstaver, fjerner
+// vanlige selskapsformer (AS/ASA/DA/ANS) og skilletegn, samler mellomrom.
+// cloud_org-feltet i Strømflyt fylles inn for hånd og stemmer ikke alltid
+// tegn-for-tegn med det offisielle navnet i Cloud (f.eks. "FAV Eiendomsutvikling"
+// vs. "FAV Eiendomsutvikling AS") - uten dette ville en helt reell organisasjon
+// stadig blitt rapportert som "ikke funnet".
+function normalizeOrgName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[.,]/g, "")
+    .replace(/\b(as|asa|da|ans)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+interface OrgMatchResult {
+  organizationId: string | null;
+  merknad?: string;
+}
+
+async function findOrganizationId(adminToken: string, cloudOrgName: string): Promise<OrgMatchResult> {
   const res = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations`, {
     headers: { Authorization: `Bearer ${adminToken}`, Accept: "application/json" },
     cache: "no-store",
@@ -70,9 +90,23 @@ async function findOrganizationId(adminToken: string, cloudOrgName: string): Pro
     throw new Error(`Kunne ikke hente organisasjonsliste (${res.status}): ${body.slice(0, 300)}`);
   }
   const orgs = (await res.json()) as CloudOrg[];
-  const needle = cloudOrgName.trim().toLowerCase();
-  const treff = orgs.find((o) => o.name.trim().toLowerCase() === needle);
-  return treff?.id ?? null;
+  const needle = normalizeOrgName(cloudOrgName);
+
+  const exact = orgs.find((o) => normalizeOrgName(o.name) === needle);
+  if (exact) return { organizationId: exact.id };
+
+  const fuzzy = orgs.filter((o) => {
+    const n = normalizeOrgName(o.name);
+    return n.includes(needle) || needle.includes(n);
+  });
+  if (fuzzy.length === 1) return { organizationId: fuzzy[0].id };
+  if (fuzzy.length > 1) {
+    return {
+      organizationId: null,
+      merknad: `Fant ${fuzzy.length} organisasjoner i Cloud som kan matche «${cloudOrgName}» (${fuzzy.map((o) => o.name).join(", ")}) - for usikkert til å velge automatisk. Presiser cloud_org-feltet.`,
+    };
+  }
+  return { organizationId: null };
 }
 
 export async function GET(req: Request) {
@@ -101,15 +135,16 @@ export async function GET(req: Request) {
           { status: 400 },
         );
       }
-      const organizationId = await findOrganizationId(adminToken, cloudOrgName);
-      if (!organizationId) {
+      const match = await findOrganizationId(adminToken, cloudOrgName);
+      if (!match.organizationId) {
         return NextResponse.json({
           ok: true,
           funnet: false,
-          merknad: `Fant ingen organisasjon i Cloud som heter «${cloudOrgName}» - sjekk at cloud_org-feltet matcher navnet i Cloud nøyaktig.`,
+          merknad: match.merknad ??
+            `Fant ingen organisasjon i Cloud som ligner på «${cloudOrgName}» - sjekk at cloud_org-feltet er riktig.`,
         });
       }
-      const orgToken = await mintOrgToken(adminToken, organizationId);
+      const orgToken = await mintOrgToken(adminToken, match.organizationId);
       metricsHeaders = { Authorization: `Bearer ${orgToken}`, Accept: "application/json" };
     } else if (apiKey) {
       metricsHeaders = { "X-Api-Key": apiKey, Accept: "application/json" };
