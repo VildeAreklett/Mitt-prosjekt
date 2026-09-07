@@ -55,6 +55,9 @@ export interface Malepunkt {
   // Valgfritt, gjelder hele kunden - samme prinsipp som selger.
   kontaktperson_navn: string;
   kontaktperson_epost: string;
+  // Datastrøm-tilkoblingen i Adaptic Cloud sin tidsseriedatabase - hentet
+  // automatisk via "Sjekk i Cloud", null til det er bekreftet.
+  tsdb_id: string | null;
   cloud_org: string;
   bygg: string;
   adresse: string;

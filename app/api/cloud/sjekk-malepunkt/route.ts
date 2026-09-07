@@ -10,8 +10,10 @@ import { requireStromflytAccess } from "../../../../lib/server-auth";
 // kortlevd organisasjonsbundet token via internal_token-endepunktet), eller
 // om det allerede ER det ferdig minted tokenet (som skal brukes direkte mot
 // /v0/metrics uten noe mellomsteg). Prøver derfor BEGGE tolkninger i
-// rekkefølge og rapporterer tydelig hvilken (om noen) som faktisk fungerte,
-// i stedet for å gjette oss fast på én.
+// rekkefølge og legger ved DIAGNOSTIKK på hvert steg (ikke bare "ikke
+// funnet") - vi har blitt overrasket av at kjente Cloud-registrerte målere
+// kom tilbake som "ikke funnet" tidligere, og trenger å faktisk SE hvor i
+// kjeden det stopper opp i stedet for å gjette videre blindt.
 //
 // Se apiserver (Adaptic Cloud) sin InternalOrganizationsController og
 // MetricController for hvordan dette er bygget opp der.
@@ -41,6 +43,12 @@ interface CloudOrg {
   name: string;
 }
 
+interface MethodResult {
+  metode: string;
+  metrics: CloudMetric[] | null;
+  info: string;
+}
+
 // Normaliserer et organisasjonsnavn for sammenligning: små bokstaver, fjerner
 // vanlige selskapsformer (AS/ASA/DA/ANS) og skilletegn, samler mellomrom.
 function normalizeOrgName(name: string): string {
@@ -52,29 +60,31 @@ function normalizeOrgName(name: string): string {
     .trim();
 }
 
-async function fetchJson(url: string, token: string): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    cache: "no-store",
-  });
+async function fetchJson(url: string, headers: HeadersInit): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const res = await fetch(url, { headers: { ...headers, Accept: "application/json" }, cache: "no-store" });
   const body = await res.json().catch(() => null);
   return { ok: res.ok, status: res.status, body };
 }
 
 // Tolkning 2: tokenet er allerede det ferdig utledede, brukbare tokenet -
 // bruk det rett og slett direkte mot /v0/metrics.
-async function tryDirectToken(token: string): Promise<CloudMetric[] | null> {
-  const r = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, token);
-  if (r.ok && Array.isArray(r.body)) return r.body as CloudMetric[];
-  return null;
+async function tryDirectToken(token: string): Promise<MethodResult> {
+  const r = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { Authorization: `Bearer ${token}` });
+  if (r.ok && Array.isArray(r.body)) {
+    return { metode: "tokenet brukt direkte", metrics: r.body as CloudMetric[], info: `${r.body.length} målere hentet` };
+  }
+  return { metode: "tokenet brukt direkte", metrics: null, info: `avvist (HTTP ${r.status})` };
 }
 
 // Tolkning 1: tokenet er et admin-token som må brukes til å "minte" et nytt,
 // kortlevd, organisasjonsbundet token (POST .../internal_token) før det kan
 // brukes mot /v0/metrics.
-async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise<CloudMetric[] | null> {
-  const orgsRes = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, adminToken);
-  if (!orgsRes.ok || !Array.isArray(orgsRes.body)) return null;
+async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise<MethodResult> {
+  const metode = "minted et nytt token via organisasjonen";
+  const orgsRes = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
+  if (!orgsRes.ok || !Array.isArray(orgsRes.body)) {
+    return { metode, metrics: null, info: `organisasjonsliste avvist (HTTP ${orgsRes.status})` };
+  }
   const orgs = orgsRes.body as CloudOrg[];
 
   const needle = normalizeOrgName(cloudOrgName);
@@ -83,7 +93,12 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
     const n = normalizeOrgName(o.name);
     return n.includes(needle) || needle.includes(n);
   });
-  if (fuzzy.length !== 1) return null;
+  if (fuzzy.length === 0) {
+    return { metode, metrics: null, info: `fant ${orgs.length} organisasjoner totalt, ingen matcher «${cloudOrgName}»` };
+  }
+  if (fuzzy.length > 1) {
+    return { metode, metrics: null, info: `${fuzzy.length} organisasjoner matcher «${cloudOrgName}» (${fuzzy.map((o) => o.name).join(", ")}) - for usikkert` };
+  }
 
   const mintRes = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations/${fuzzy[0].id}/internal_token`, {
     method: "POST",
@@ -91,13 +106,23 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
     body: JSON.stringify({ writeAccess: false }),
     cache: "no-store",
   });
-  if (!mintRes.ok) return null;
+  if (!mintRes.ok) {
+    return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», men minting feilet (HTTP ${mintRes.status})` };
+  }
   const mintData = (await mintRes.json().catch(() => null)) as { token: string } | null;
-  if (!mintData?.token) return null;
+  if (!mintData?.token) {
+    return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», minting ga ikke noe token tilbake` };
+  }
 
-  const metricsRes = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, mintData.token);
-  if (metricsRes.ok && Array.isArray(metricsRes.body)) return metricsRes.body as CloudMetric[];
-  return null;
+  const metricsRes = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { Authorization: `Bearer ${mintData.token}` });
+  if (metricsRes.ok && Array.isArray(metricsRes.body)) {
+    return {
+      metode,
+      metrics: metricsRes.body as CloudMetric[],
+      info: `org «${fuzzy[0].name}» (id ${fuzzy[0].id}) - ${metricsRes.body.length} målere hentet`,
+    };
+  }
+  return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», minted token, men /v0/metrics avvist (HTTP ${metricsRes.status})` };
 }
 
 export async function GET(req: Request) {
@@ -117,48 +142,42 @@ export async function GET(req: Request) {
   const apiKey = process.env.ADAPTIC_CLOUD_API_KEY;
 
   try {
-    // Prøver hver tilgjengelig metode i tur og orden. Et vellykket kall (auth
-    // ok) med en liste som IKKE inneholder måleren vi leter etter er ikke
-    // nødvendigvis "ikke funnet" - det direkte tokenet kan være scopet til
-    // en helt annen (eller mer begrenset) organisasjon enn den vi faktisk
-    // trenger. Derfor: fortsett til neste metode når treff mangler, i stedet
-    // for å stoppe på første vellykkede (men feilscopede) kall.
-    let harHattEtVellykketKall = false;
+    const diagnostikk: string[] = [];
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
+    let harHattEtVellykketKall = false;
 
-    const kandidater: { metode: string; hent: () => Promise<CloudMetric[] | null> }[] = [];
-    if (adminToken) {
-      kandidater.push({ metode: "tokenet brukt direkte", hent: () => tryDirectToken(adminToken) });
-      if (cloudOrgName) {
-        kandidater.push({
-          metode: "minted et nytt token via organisasjonen",
-          hent: () => tryMintedToken(adminToken, cloudOrgName),
-        });
-      }
-    }
-    if (apiKey) {
-      kandidater.push({
-        metode: "X-Api-Key",
-        hent: async () => {
-          const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, {
-            headers: { "X-Api-Key": apiKey, Accept: "application/json" },
-            cache: "no-store",
-          });
-          return res.ok ? ((await res.json()) as CloudMetric[]) : null;
-        },
-      });
-    }
-
-    for (const k of kandidater) {
-      const metrics = await k.hent();
-      if (!metrics) continue; // denne metoden ble ikke godkjent i det hele tatt
+    const kjor = async (result: MethodResult) => {
+      diagnostikk.push(`${result.metode}: ${result.info}`);
+      if (!result.metrics) return;
       harHattEtVellykketKall = true;
-      const funnet = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
+      if (treff) return; // allerede funnet via en tidligere metode
+      const funnet = result.metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
       if (funnet) {
         treff = funnet;
-        brukteMetode = k.metode;
-        break;
+        brukteMetode = result.metode;
+      }
+    };
+
+    if (adminToken) {
+      await kjor(await tryDirectToken(adminToken));
+      if (!treff && cloudOrgName) {
+        await kjor(await tryMintedToken(adminToken, cloudOrgName));
+      }
+    }
+    if (!treff && apiKey) {
+      const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, {
+        headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const metrics = (await res.json()) as CloudMetric[];
+        diagnostikk.push(`X-Api-Key: ${metrics.length} målere hentet`);
+        harHattEtVellykketKall = true;
+        const funnet = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
+        if (funnet) { treff = funnet; brukteMetode = "X-Api-Key"; }
+      } else {
+        diagnostikk.push(`X-Api-Key: avvist (HTTP ${res.status})`);
       }
     }
 
@@ -166,16 +185,18 @@ export async function GET(req: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error: adminToken
-            ? "Fikk ikke tilgang verken ved å bruke admin-tokenet direkte eller ved å minte et nytt token for organisasjonen. Tokenet blir ikke godkjent av Adaptic Cloud i det hele tatt - trolig utløpt eller feil verdi."
-            : "Mangler ADAPTIC_CLOUD_ADMIN_TOKEN eller ADAPTIC_CLOUD_API_KEY, eller ingen av dem ble godkjent.",
+          error: "Ingen av metodene ble godkjent av Adaptic Cloud. Detaljer: " + diagnostikk.join(" | "),
         },
         { status: 502 },
       );
     }
 
     if (!treff) {
-      return NextResponse.json({ ok: true, funnet: false });
+      return NextResponse.json({
+        ok: true,
+        funnet: false,
+        merknad: "Ikke funnet i noen av de sjekkede kildene. Detaljer: " + diagnostikk.join(" | "),
+      });
     }
     // Grov tilnærming til "i drift": en hovedmåler (mainImported) med en
     // tilknyttet tsdb_id har en reell datatilkobling satt opp. Dette

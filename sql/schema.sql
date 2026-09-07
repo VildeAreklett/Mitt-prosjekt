@@ -12,6 +12,9 @@ create table if not exists public.strombestillinger (
   -- driftsmeldinger går direkte dit, ikke bare til Adaptics sentrale e-post.
   kontaktperson_navn  text not null default '',
   kontaktperson_epost text not null default '',
+  -- datastrøm-tilkoblingen i Adaptic Cloud sin tidsseriedatabase, hentet via
+  -- "Sjekk i Cloud" - se migration-009.
+  tsdb_id text,
   cloud_org         text not null,
 
   -- anlegg

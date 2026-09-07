@@ -116,6 +116,7 @@ const REG_COLUMNS: { key: string; label: string }[] = [
   { key: "rute", label: "Rute" },
   { key: "kommersielt", label: "Kommersielt" },
   { key: "avtaletype", label: "Overtakelse" },
+  { key: "tsdb_id", label: "tsdb_id" },
   { key: "status", label: "Status" },
 ];
 const REG_COLUMNS_STORAGE_KEY = "stromflyt_synlige_kolonner";
@@ -126,7 +127,7 @@ const emptyForm: Partial<Malepunkt> = {
   avtalt_oppstart: "", at_kode: "", rute: "", paslag_ore_kwh: null,
   fast_pr_maaler: null, fast_aarspris: null, signert: false, kommentar: "",
   avtaletype: "", leverandoravtale_fil_sti: null,
-  kontaktperson_navn: "", kontaktperson_epost: "",
+  kontaktperson_navn: "", kontaktperson_epost: "", tsdb_id: null,
 };
 
 export default function StromflytPage() {
@@ -651,6 +652,7 @@ export default function StromflytPage() {
           leverandoravtale_fil_sti: null,
           kontaktperson_navn: "",
           kontaktperson_epost: "",
+          tsdb_id: null,
         }, fakturaRute ? "Innmeldt" : "Kladd");
         ok += 1;
       } catch (e: any) {
@@ -788,6 +790,7 @@ export default function StromflytPage() {
           leverandoravtale_fil_sti: null,
           kontaktperson_navn: "",
           kontaktperson_epost: "",
+          tsdb_id: null,
         }, r.status_suggestion);
         if (mapping.selger.trim()) await updateCustomerSeller(mapping.org_nr, mapping.selger);
         ok += 1;
@@ -844,6 +847,7 @@ export default function StromflytPage() {
           leverandoravtale_fil_sti: null,
           kontaktperson_navn: "",
           kontaktperson_epost: "",
+          tsdb_id: null,
         });
         if (importSeller.trim()) await updateCustomerSeller(parsed.org_nr, importSeller);
         ok += 1;
@@ -1033,6 +1037,12 @@ export default function StromflytPage() {
         await updateStatus(r.id, foreslatt);
         statusMelding = ` → satt til «${displayStatus(foreslatt)}»`;
       }
+      // Lagre tsdb_id permanent på raden, ikke bare vise den i en toast - så
+      // den kan tas ut i Excel og sendes videre til Entelios på historiske
+      // målere som allerede er koblet opp i Cloud.
+      if (data.tsdb_id && data.tsdb_id !== r.tsdb_id) {
+        await updateMalepunktDetails(r.id, { tsdb_id: data.tsdb_id });
+      }
       return {
         ok: true,
         funnet: true,
@@ -1104,6 +1114,7 @@ export default function StromflytPage() {
         leverandoravtale_fil_sti: form.avtaletype === "Eierskifte" ? (form.leverandoravtale_fil_sti ?? null) : null,
         kontaktperson_navn: form.kontaktperson_navn?.trim() || "",
         kontaktperson_epost: form.kontaktperson_epost?.trim() || "",
+        tsdb_id: form.tsdb_id ?? null,
       };
       if (editingId) {
         await updateMalepunktDetails(editingId, payload);
@@ -1264,6 +1275,7 @@ export default function StromflytPage() {
       { label: "Netteier", value: (r) => r.netteier },
       { label: "Årsforbruk (kWh)", value: (r) => r.aarsforbruk_kwh ?? "" },
       { label: "Overtakelse", value: (r) => r.avtaletype || "" },
+      { label: "tsdb_id", value: (r) => r.tsdb_id || "" },
       { label: "Kommentar", value: (r) => r.kommentar || "" },
     ];
     // Full eksport uavhengig av kolonnevisningen på skjermen - dette er ment
@@ -1565,6 +1577,7 @@ export default function StromflytPage() {
                   {visibleCols.rute && <th>Rute</th>}
                   {visibleCols.kommersielt && <th>Kommersielt</th>}
                   {visibleCols.avtaletype && <th>Overtakelse</th>}
+                  {visibleCols.tsdb_id && <th>tsdb_id</th>}
                   {visibleCols.status && <th>Status</th>}
                   <th>Handling</th>
                 </tr></thead>
@@ -1588,6 +1601,7 @@ export default function StromflytPage() {
                         {visibleCols.rute && <td><span className={"rute " + r.rute}>{r.rute}</span></td>}
                         {visibleCols.kommersielt && <td>{kommersielt(r)}</td>}
                         {visibleCols.avtaletype && <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>}
+                        {visibleCols.tsdb_id && <td className="num">{r.tsdb_id || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.status && <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>}
                         <td>
                           <select
