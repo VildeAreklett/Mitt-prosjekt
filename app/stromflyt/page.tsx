@@ -4,7 +4,7 @@
 // Drop-in for App Router: app/stromflyt/page.tsx. Krever @supabase/supabase-js
 // og env-variablene NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.
 
-import { useEffect, useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 import ExcelJS from "exceljs";
 import {
   STAGES,
@@ -147,6 +147,7 @@ export default function StromflytPage() {
   const [colsMenuOpen, setColsMenuOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const toastTimerRef = useRef<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [form, setForm] = useState<Partial<Malepunkt>>({ ...emptyForm });
@@ -284,12 +285,18 @@ export default function StromflytPage() {
     finally { setLoading(false); }
   }
   function flash(m: string) {
+    // Flere flash()-kall etter hverandre (f.eks. "Sjekker i Cloud …" fulgt av
+    // selve resultatet et par sekunder senere) må kansellere HVERANDRES
+    // planlagte fjerning - ellers kan en tidligere, kortere timeout fyre av
+    // rett etter at den nye meldingen ble satt, og slette den igjen nesten
+    // øyeblikkelig (så meldingen "blinker" og forsvinner på under et sekund).
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     setToast(m);
     // Lengre meldinger (f.eks. feilmeldinger med detaljer) trenger mer tid
     // til å bli lest enn en kort bekreftelse - varier visningstiden med
     // tekstlengden i stedet for én fast, ofte for kort, varighet.
     const varighet = Math.min(9000, Math.max(3000, m.length * 60));
-    window.setTimeout(() => setToast(""), varighet);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), varighet);
   }
 
   async function stromflytAuthHeaders(): Promise<HeadersInit> {
