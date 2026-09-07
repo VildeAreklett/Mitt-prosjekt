@@ -117,30 +117,52 @@ export async function GET(req: Request) {
   const apiKey = process.env.ADAPTIC_CLOUD_API_KEY;
 
   try {
-    let metrics: CloudMetric[] | null = null;
+    // Prøver hver tilgjengelig metode i tur og orden. Et vellykket kall (auth
+    // ok) med en liste som IKKE inneholder måleren vi leter etter er ikke
+    // nødvendigvis "ikke funnet" - det direkte tokenet kan være scopet til
+    // en helt annen (eller mer begrenset) organisasjon enn den vi faktisk
+    // trenger. Derfor: fortsett til neste metode når treff mangler, i stedet
+    // for å stoppe på første vellykkede (men feilscopede) kall.
+    let harHattEtVellykketKall = false;
+    let treff: CloudMetric | undefined;
     let brukteMetode = "";
 
+    const kandidater: { metode: string; hent: () => Promise<CloudMetric[] | null> }[] = [];
     if (adminToken) {
-      metrics = await tryDirectToken(adminToken);
-      if (metrics) {
-        brukteMetode = "tokenet brukt direkte";
-      } else if (cloudOrgName) {
-        metrics = await tryMintedToken(adminToken, cloudOrgName);
-        if (metrics) brukteMetode = "minted et nytt token via organisasjonen";
+      kandidater.push({ metode: "tokenet brukt direkte", hent: () => tryDirectToken(adminToken) });
+      if (cloudOrgName) {
+        kandidater.push({
+          metode: "minted et nytt token via organisasjonen",
+          hent: () => tryMintedToken(adminToken, cloudOrgName),
+        });
       }
     }
-    if (!metrics && apiKey) {
-      const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, {
-        headers: { "X-Api-Key": apiKey, Accept: "application/json" },
-        cache: "no-store",
+    if (apiKey) {
+      kandidater.push({
+        metode: "X-Api-Key",
+        hent: async () => {
+          const res = await fetch(`${CLOUD_API_BASE}/v0/metrics`, {
+            headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+            cache: "no-store",
+          });
+          return res.ok ? ((await res.json()) as CloudMetric[]) : null;
+        },
       });
-      if (res.ok) {
-        metrics = (await res.json()) as CloudMetric[];
-        brukteMetode = "X-Api-Key";
+    }
+
+    for (const k of kandidater) {
+      const metrics = await k.hent();
+      if (!metrics) continue; // denne metoden ble ikke godkjent i det hele tatt
+      harHattEtVellykketKall = true;
+      const funnet = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
+      if (funnet) {
+        treff = funnet;
+        brukteMetode = k.metode;
+        break;
       }
     }
 
-    if (!metrics) {
+    if (!harHattEtVellykketKall) {
       return NextResponse.json(
         {
           ok: false,
@@ -152,9 +174,8 @@ export async function GET(req: Request) {
       );
     }
 
-    const treff = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
     if (!treff) {
-      return NextResponse.json({ ok: true, funnet: false, metode: brukteMetode });
+      return NextResponse.json({ ok: true, funnet: false });
     }
     // Grov tilnærming til "i drift": en hovedmåler (mainImported) med en
     // tilknyttet tsdb_id har en reell datatilkobling satt opp. Dette

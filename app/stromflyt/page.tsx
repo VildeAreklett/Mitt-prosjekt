@@ -1008,18 +1008,21 @@ export default function StromflytPage() {
 
   // Slår opp i det ekte Adaptic Cloud API-et (ikke MCP) om måleren allerede
   // finnes der - se app/api/cloud/sjekk-malepunkt/route.ts.
-  async function sjekkICloud(r: Malepunkt) {
-    flash("Sjekker i Cloud …");
+  // Kjernelogikken for ett enkelt Cloud-oppslag, uten toast - gjenbrukes både
+  // av enkeltrad-handlingen og bulk-sjekken. Oppdaterer status i databasen
+  // (fremover, aldri bakover) når måleren faktisk finnes, og returnerer et
+  // resultat til den som kalte, som selv bestemmer hvordan det vises frem.
+  async function sjekkEnMaalerICloud(r: Malepunkt): Promise<
+    { ok: true; funnet: false; merknad?: string } | { ok: true; funnet: true; melding: string } | { ok: false; error: string }
+  > {
     try {
       const headers = await stromflytAuthHeaders();
       const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "" });
       const res = await fetch(`/api/cloud/sjekk-malepunkt?${qs.toString()}`, { headers });
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Ukjent feil");
-      if (!data.funnet) {
-        flash(data.merknad ? `${r.bygg}: ${data.merknad}` : `${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
-        return;
-      }
+      if (!res.ok || !data.ok) return { ok: false, error: data.error || "Ukjent feil" };
+      if (!data.funnet) return { ok: true, funnet: false, merknad: data.merknad };
+
       // Flytter status fremover automatisk basert på hva som faktisk finnes i
       // Cloud, ALDRI bakover - en rad som allerede er lenger fremme i egen
       // oppfølging (f.eks. manuelt satt til Aktiv) skal ikke reverseres bare
@@ -1028,13 +1031,48 @@ export default function StromflytPage() {
       let statusMelding = "";
       if (foreslatt && STAGES.indexOf(foreslatt) > STAGES.indexOf(r.status)) {
         await updateStatus(r.id, foreslatt);
-        await refresh();
         statusMelding = ` → satt til «${displayStatus(foreslatt)}»`;
       }
-      flash(`${r.bygg}: funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`);
+      return {
+        ok: true,
+        funnet: true,
+        melding: `funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`,
+      };
     } catch (e: any) {
-      flash("Feil ved Cloud-oppslag: " + (e.message ?? e));
+      return { ok: false, error: e.message ?? String(e) };
     }
+  }
+
+  async function sjekkICloud(r: Malepunkt) {
+    flash("Sjekker i Cloud …");
+    const result = await sjekkEnMaalerICloud(r);
+    if (!result.ok) { flash("Feil ved Cloud-oppslag: " + result.error); return; }
+    if (!result.funnet) {
+      flash(result.merknad ? `${r.bygg}: ${result.merknad}` : `${r.bygg}: IKKE funnet i Adaptic Cloud ennå`);
+      await refresh();
+      return;
+    }
+    flash(`${r.bygg}: ${result.melding}`);
+    await refresh();
+  }
+
+  // Sjekker alle valgte rader mot Cloud etter hverandre (ikke parallelt - vi
+  // vil ikke hamre løs på Adaptic Cloud sitt API med mange samtidige kall for
+  // hver rad, som gjerne allerede gjør 1-3 kall internt per måler).
+  async function sjekkFlereICloud() {
+    const targets = selectedRowsForBulk;
+    if (!targets.length) return;
+    let funnet = 0, ikkeFunnet = 0, feilet = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const r = targets[i];
+      flash(`Sjekker i Cloud … (${i + 1}/${targets.length}: ${r.bygg})`);
+      const result = await sjekkEnMaalerICloud(r);
+      if (!result.ok) feilet += 1;
+      else if (result.funnet) funnet += 1;
+      else ikkeFunnet += 1;
+    }
+    await refresh();
+    flash(`Cloud-sjekk ferdig: ${funnet} funnet, ${ikkeFunnet} ikke funnet${feilet ? `, ${feilet} feilet` : ""}`);
   }
 
   async function showHistory(r: Malepunkt) {
@@ -1502,6 +1540,7 @@ export default function StromflytPage() {
               <span className="grow" />
               <button className="btn sm" onClick={() => setSelectedAvtaletype("Eierskifte")}>Sett {selectedRowsForBulk.length} som Eierskifte</button>
               <button className="btn sm" onClick={() => setSelectedAvtaletype("Spotavtale")}>Sett {selectedRowsForBulk.length} som Spotavtale</button>
+              <button className="btn sm" onClick={sjekkFlereICloud}>Sjekk {selectedRowsForBulk.length} i Cloud</button>
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
                 Slett {selectedDeletableIds.length || "valgte"}
