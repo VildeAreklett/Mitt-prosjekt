@@ -22,14 +22,29 @@ export const STAGES: Status[] = [
   "Aktiv",
 ];
 
-// Nedtrekksverdier. Erstatt med live-uttrekk fra Adaptic Cloud lese-API når det er koblet.
+// Forslagsliste (datalist - fritekst, ikke låst nedtrekk). Erstatt med
+// live-uttrekk fra Adaptic Cloud lese-API når det er koblet.
+//
+// Viktig mønster (bekreftet mot Cloud sin organisasjonsliste sept. 2026):
+// - Er kunden allerede satt opp som EGEN strømkunde i Cloud ("i drift"),
+//   ligger den der under et eget "SK <kundenavn>"-organisasjonsnavn
+//   (f.eks. "SK FAV", "SK EGD", "SK Hathon Eiendom") - IKKE under kundens
+//   vanlige orgnavn.
+// - Er det ikke opprettet noen egen strømkunde-org for kunden ennå, ligger
+//   målerne under kundens vanlige, eksisterende org (f.eks. "Bergensgruppen AS").
+// Å velge feil variant her gjør at "Sjekk i Cloud" leter i feil organisasjons
+// målere og alltid rapporterer "ikke funnet" - selv om måleren faktisk finnes.
 export const CLOUD_ORGS: string[] = [
-  "Strømkunder",
+  "SK FAV",
+  "SK EGD",
+  "SK Hathon Eiendom",
   "EGD Property AS",
   "Pareto Business Management AS",
   "Bergens Traverbane AS",
   "FAV Eiendomsutvikling AS",
   "Hathon Eiendom",
+  "Bergensgruppen AS",
+  "Strømkunder",
 ];
 
 export const NETTEIERE: string[] = [

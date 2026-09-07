@@ -1956,11 +1956,9 @@ export default function StromflytPage() {
               <Field label="Kontaktperson e-post (valgfritt)">
                 <input type="email" value={form.kontaktperson_epost ?? ""} onChange={(e) => set("kontaktperson_epost", e.target.value)} placeholder="navn@kunde.no" />
               </Field>
-              <Field label="Kunde/organisasjon for strømregistreringen" req err={errFor("cloud_org")} hint="Velg bare relevant strøm-/kundeorganisasjon. Ikke hele Cloud-listen skal inn her.">
-                <select value={form.cloud_org ?? ""} onChange={(e) => set("cloud_org", e.target.value)}>
-                  <option value="">velg relevant org</option>
-                  {CLOUD_ORGS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
+              <Field label="Kunde/organisasjon for strømregistreringen" req err={errFor("cloud_org")} hint={'Er kunden satt opp som egen strømkunde i Cloud ("i drift"): bruk "SK <kundenavn>". Er den ikke det ennå: bruk kundens vanlige orgnavn (f.eks. "Bergensgruppen AS").'}>
+                <input list="cloud-org-list-form" value={form.cloud_org ?? ""} onChange={(e) => set("cloud_org", e.target.value)} placeholder="SK <kundenavn> eller kundens orgnavn" />
+                <datalist id="cloud-org-list-form">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
               </Field>
             </fieldset>
 
