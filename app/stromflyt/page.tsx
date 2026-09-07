@@ -1031,7 +1031,7 @@ export default function StromflytPage() {
         await refresh();
         statusMelding = ` → satt til «${displayStatus(foreslatt)}»`;
       }
-      flash(`${r.bygg}: funnet i Cloud - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`);
+      flash(`${r.bygg}: funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`);
     } catch (e: any) {
       flash("Feil ved Cloud-oppslag: " + (e.message ?? e));
     }
