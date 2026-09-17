@@ -100,7 +100,7 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
   // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
   // samlekø for "dette gjenstår å sende inn".
-  { key: "handling", label: "Ikke meldt inn", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
+  { key: "handling", label: "Klar til innmelding", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
   { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
@@ -1666,7 +1666,7 @@ export default function StromflytPage() {
 
             <div className="tiles">
               <Tile k="Målepunkt totalt" v={String(tiles.total)} sub={tiles.nyeDenneUken > 0 ? `+${tiles.nyeDenneUken} denne uken` : undefined} />
-              <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
+              <Tile k="Klar til innmelding" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile
                 k="Eierskifte / Spotavtale"
                 v={`${tiles.eierskifte} / ${tiles.spotavtale}`}
@@ -1733,7 +1733,7 @@ export default function StromflytPage() {
             </div>
             <div className="priokoer">
               <div className="priokort">
-                <div className="priokort-hd"><span className="dot varsel" />Ikke meldt inn<b>{prioriterteKoer.ikkeMeldtInn.total}</b></div>
+                <div className="priokort-hd"><span className="dot varsel" />Klar til innmelding<b>{prioriterteKoer.ikkeMeldtInn.total}</b></div>
                 {prioriterteKoer.ikkeMeldtInn.rader.map((r) => (
                   <div className="priorad" key={r.id}>
                     <div><b>{r.kunde || "Uten kunde"}</b><span>MPID {r.maalepunkt_id || "ikke satt"}</span></div>
