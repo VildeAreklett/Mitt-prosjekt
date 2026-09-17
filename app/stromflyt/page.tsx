@@ -90,6 +90,8 @@ const displayNameFromEmail = (email: string | null) => {
 type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
+const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
+
 const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   { key: "", label: "Alle", statuses: [] },
   // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
@@ -436,6 +438,30 @@ export default function StromflytPage() {
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
     };
   }, [rows]);
+
+  // Registrert volum per måned - viser IKKE ekte målt forbruk (det ligger i
+  // Adaptic Cloud/Entelios, ikke i vårt register), men hvor mye estimert
+  // årsforbruk (aarsforbruk_kwh) vi har fått registrert hos Entelios,
+  // fordelt på måneden anlegget har avtalt oppstart. avtalt_oppstart er en
+  // "YYYY-MM-DD"-tekststreng - hentes ut med substring i stedet for
+  // new Date(...), som ville gitt feil måned pga. tidssone-forskyvning på
+  // rene datostrenger (samme grunn som resten av filen aldri Date-parser
+  // dette feltet, bare sammenligner det som tekst).
+  const [volumChartYear, setVolumChartYear] = useState(() => new Date().getFullYear());
+  const volumChart = useMemo(() => {
+    const registrert = rows.filter(
+      (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios") && /^\d{4}-\d{2}/.test(r.avtalt_oppstart)
+    );
+    const years = Array.from(new Set(registrert.map((r) => Number(r.avtalt_oppstart.slice(0, 4))))).sort((a, b) => b - a);
+    const perMonth = Array(12).fill(0);
+    for (const r of registrert) {
+      const year = Number(r.avtalt_oppstart.slice(0, 4));
+      const month = Number(r.avtalt_oppstart.slice(5, 7)) - 1;
+      if (year !== volumChartYear || month < 0 || month > 11) continue;
+      perMonth[month] += (r.aarsforbruk_kwh || 0) / 1_000_000;
+    }
+    return { years: years.length ? years : [volumChartYear], perMonth, maks: Math.max(...perMonth, 0.01) };
+  }, [rows, volumChartYear]);
 
   function set<K extends keyof Malepunkt>(k: K, v: Malepunkt[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -1512,6 +1538,26 @@ export default function StromflytPage() {
               />
             </div>
 
+            <div className="panel volum-chart">
+              <div className="hd">
+                <div><h2>Registrert volum per måned</h2><span className="sub">Estimert årsforbruk (GWh) for målepunkt sendt til Entelios eller lenger, fordelt på avtalt oppstartsmåned - ikke ekte målt forbruk</span></div>
+                <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
+                  {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div className="volum-bars">
+                {MANEDSNAVN.map((navn, i) => (
+                  <div className="volum-bar-col" key={navn}>
+                    <div className="volum-bar-track" title={`${volumChart.perMonth[i].toFixed(2)} GWh`}>
+                      <div className="volum-bar" style={{ height: `${(volumChart.perMonth[i] / volumChart.maks) * 100}%` }} />
+                    </div>
+                    <span className="volum-bar-val">{volumChart.perMonth[i] > 0 ? volumChart.perMonth[i].toFixed(1) : ""}</span>
+                    <span className="volum-bar-label">{navn}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="overview-section-heading">
               <div><h2>Status og arbeidskøer</h2><span>Velg en kø for å åpne den i arbeidslisten</span></div>
             </div>
@@ -2305,6 +2351,13 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .tile .v{font-size:27px;font-weight:680;letter-spacing:-.02em;margin-top:3px}
 .tile .v small{font-size:14px;font-weight:500;color:var(--sf-ink-3)}
 .tile.alert .v{color:var(--sf-warn)}
+.volum-chart .hd{align-items:flex-start;justify-content:space-between}.volum-chart .hd select{margin-left:12px}
+.volum-bars{display:flex;align-items:flex-end;gap:10px;padding:20px 18px 14px;height:180px}
+.volum-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
+.volum-bar-track{flex:1;display:flex;align-items:flex-end;width:100%;max-width:38px}
+.volum-bar{width:100%;background:var(--sf-accent);border-radius:4px 4px 0 0;min-height:2px;transition:height .2s}
+.volum-bar-val{font-size:11px;color:var(--sf-ink-3);margin-top:6px;height:14px}
+.volum-bar-label{font-size:12px;color:var(--sf-ink-2);margin-top:2px}
 .panel{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;margin-bottom:20px}
 .panel>.hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--sf-border)}
 .panel>.hd h2{font-size:15px;font-weight:620}
