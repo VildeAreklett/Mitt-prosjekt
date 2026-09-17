@@ -415,7 +415,26 @@ export default function StromflytPage() {
     const eierskifte = rows.filter((r) => r.avtaletype === "Eierskifte").length;
     const spotavtale = rows.filter((r) => r.avtaletype === "Spotavtale").length;
     const ikkeAvklart = rows.filter((r) => !r.avtaletype).length;
-    return { total: rows.length, a, b, arr, trenger, eierskifte, spotavtale, ikkeAvklart };
+
+    // Volum vi faktisk skal levere på - summert årsforbruk for alt som er
+    // sendt til Entelios eller lenger (dvs. reelt registrert hos dem, ikke
+    // bare planlagt internt hos oss). Vist i GWh siden kWh-tallene blir
+    // uoversiktlig store i sum.
+    const registrertHosEntelios = rows.filter(
+      (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios")
+    );
+    const bekreftetAvEntelios = registrertHosEntelios.filter(
+      (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Bekreftet")
+    );
+    const sumKwh = (liste: Malepunkt[]) => liste.reduce((s, r) => s + (r.aarsforbruk_kwh || 0), 0);
+    const gwhRegistrert = sumKwh(registrertHosEntelios) / 1_000_000;
+    const gwhBekreftet = sumKwh(bekreftetAvEntelios) / 1_000_000;
+    const registrertUtenForbruk = registrertHosEntelios.filter((r) => !r.aarsforbruk_kwh).length;
+
+    return {
+      total: rows.length, a, b, arr, trenger, eierskifte, spotavtale, ikkeAvklart,
+      gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
+    };
   }, [rows]);
 
   function set<K extends keyof Malepunkt>(k: K, v: Malepunkt[K]) {
@@ -1485,6 +1504,12 @@ export default function StromflytPage() {
               <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
               <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile k="Eierskifte / Spotavtale" v={`${tiles.eierskifte} / ${tiles.spotavtale}`} sub={`${tiles.ikkeAvklart} ikke avklart ennå`} alert={tiles.ikkeAvklart > 0} />
+              <Tile
+                k="GWh registrert hos Entelios"
+                v={`${tiles.gwhRegistrert.toFixed(2)} GWh`}
+                sub={`herav ${tiles.gwhBekreftet.toFixed(2)} GWh bekreftet · ${tiles.registrertAntall} målepunkt${tiles.registrertUtenForbruk > 0 ? ` · ${tiles.registrertUtenForbruk} mangler årsforbruk` : ""}`}
+                alert={tiles.registrertUtenForbruk > 0}
+              />
             </div>
 
             <div className="overview-section-heading">
