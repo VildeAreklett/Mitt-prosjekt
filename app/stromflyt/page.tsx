@@ -502,6 +502,7 @@ export default function StromflytPage() {
   // rene datostrenger (samme grunn som resten av filen aldri Date-parser
   // dette feltet, bare sammenligner det som tekst).
   const [volumChartYear, setVolumChartYear] = useState(() => new Date().getFullYear());
+  const [volumVisning, setVolumVisning] = useState<"maned" | "kumulativt">("maned");
   const volumChart = useMemo(() => {
     const registrert = rows.filter(
       (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios") && /^\d{4}-\d{2}/.test(r.avtalt_oppstart)
@@ -516,7 +517,17 @@ export default function StromflytPage() {
     }
     const naa = new Date();
     const naavarendeManed = volumChartYear === naa.getFullYear() ? naa.getMonth() : -1;
-    return { years: years.length ? years : [volumChartYear], perMonth, maks: Math.max(...perMonth, 0.01), naavarendeManed };
+    // Kumulativt volum - hvor mye estimert forbruk som totalt har blitt
+    // registrert etter hvert som nye avtaler kommer inn, i stedet for bare
+    // hvor mye som kom inn i den enkelte måneden. Gir et "vekst"-bilde av
+    // porteføljen, med totalen ved årsslutt som siste punkt.
+    const kumulativt: number[] = [];
+    perMonth.reduce((sum, v, i) => { kumulativt[i] = sum + v; return kumulativt[i]; }, 0);
+    return {
+      years: years.length ? years : [volumChartYear], perMonth, kumulativt,
+      maks: Math.max(...perMonth, 0.01), maksKumulativt: Math.max(...kumulativt, 0.01),
+      naavarendeManed, total: kumulativt[11] ?? 0,
+    };
   }, [rows, volumChartYear]);
 
   function set<K extends keyof Malepunkt>(k: K, v: Malepunkt[K]) {
@@ -1763,7 +1774,11 @@ export default function StromflytPage() {
               <Tile
                 k="GWh registrert hos Entelios"
                 v={`${tiles.gwhRegistrert.toFixed(2)} GWh`}
-                sub={`herav ${tiles.gwhBekreftet.toFixed(2)} GWh bekreftet · ${tiles.registrertAntall} målepunkt${tiles.registrertUtenForbruk > 0 ? ` · ${tiles.registrertUtenForbruk} mangler årsforbruk` : ""}`}
+                sub={`${
+                  tiles.gwhBekreftet < tiles.gwhRegistrert
+                    ? `herav ${tiles.gwhBekreftet.toFixed(2)} GWh bekreftet · `
+                    : tiles.gwhRegistrert > 0 ? "alt bekreftet · " : ""
+                }${tiles.registrertAntall} målepunkt${tiles.registrertUtenForbruk > 0 ? ` · ${tiles.registrertUtenForbruk} mangler årsforbruk` : ""}`}
                 alert={tiles.registrertUtenForbruk > 0}
               />
             </div>
@@ -1789,21 +1804,38 @@ export default function StromflytPage() {
 
               <div className="panel volum-chart">
                 <div className="hd">
-                  <div><h2>Registrert volum</h2><span className="sub">GWh · estimert, ikke målt forbruk</span></div>
-                  <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
-                    {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
-                  </select>
+                  <div>
+                    <h2>Registrert volum</h2>
+                    <span className="sub">
+                      {volumVisning === "maned"
+                        ? "GWh nytt volum per måned · estimert, ikke målt forbruk"
+                        : `GWh totalt akkumulert · estimert helårstotal ${volumChart.total.toFixed(2)} GWh`}
+                    </span>
+                  </div>
+                  <div className="volum-chart-valg">
+                    <div className="seg-toggle">
+                      <button className={volumVisning === "maned" ? "active" : ""} onClick={() => setVolumVisning("maned")}>Per måned</button>
+                      <button className={volumVisning === "kumulativt" ? "active" : ""} onClick={() => setVolumVisning("kumulativt")}>Kumulativt</button>
+                    </div>
+                    <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
+                      {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="volum-bars">
-                  {MANEDSNAVN.map((navn, i) => (
-                    <div className="volum-bar-col" key={navn}>
-                      <div className="volum-bar-track" title={`${volumChart.perMonth[i].toFixed(2)} GWh`}>
-                        <div className={"volum-bar" + (i === volumChart.naavarendeManed ? " naa" : "")} style={{ height: `${(volumChart.perMonth[i] / volumChart.maks) * 100}%` }} />
+                  {MANEDSNAVN.map((navn, i) => {
+                    const verdi = volumVisning === "maned" ? volumChart.perMonth[i] : volumChart.kumulativt[i];
+                    const maks = volumVisning === "maned" ? volumChart.maks : volumChart.maksKumulativt;
+                    return (
+                      <div className="volum-bar-col" key={navn}>
+                        <div className="volum-bar-track" title={`${verdi.toFixed(2)} GWh`}>
+                          <div className={"volum-bar" + (i === volumChart.naavarendeManed ? " naa" : "")} style={{ height: `${(verdi / maks) * 100}%` }} />
+                        </div>
+                        <span className="volum-bar-val">{verdi > 0 ? verdi.toFixed(1) : ""}</span>
+                        <span className="volum-bar-label">{navn}</span>
                       </div>
-                      <span className="volum-bar-val">{volumChart.perMonth[i] > 0 ? volumChart.perMonth[i].toFixed(1) : ""}</span>
-                      <span className="volum-bar-label">{navn}</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -2652,6 +2684,11 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .tile-bar .seg-2{display:block;height:100%;background:var(--sf-accent-soft)}
 .overview-2col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch}
 .volum-chart .hd{align-items:flex-start;justify-content:space-between}.volum-chart .hd select{margin-left:12px}
+.volum-chart-valg{display:flex;align-items:center;gap:10px}
+.seg-toggle{display:flex;border:1px solid var(--sf-border-strong);border-radius:8px;overflow:hidden}
+.seg-toggle button{font:inherit;font-size:12.5px;font-weight:560;padding:6px 10px;border:0;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}
+.seg-toggle button+button{border-left:1px solid var(--sf-border-strong)}
+.seg-toggle button.active{background:var(--sf-accent);color:var(--sf-accent-ink)}
 .volum-bars{display:flex;align-items:flex-end;gap:8px;padding:20px 16px 14px;height:160px}
 .volum-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
 .volum-bar-track{flex:1;display:flex;align-items:flex-end;width:100%;max-width:32px}
