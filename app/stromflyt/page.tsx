@@ -1524,16 +1524,6 @@ export default function StromflytPage() {
 
         <div className="app-body">
           <nav className="sidenav" aria-label="Hovedmeny">
-            <div className="sidenav-merke">VISNINGER</div>
-            <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
-              <span>Oversikt</span>
-            </button>
-            <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
-              <span>Arbeidsliste</span>
-            </button>
-            <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
-              <span>Registrering</span>
-            </button>
             <div className="sidenav-merke">ARBEIDSKØER</div>
             {WORK_FILTERS.filter((f) => f.key).map((f) => {
               const count = rows.filter((r) => f.statuses.includes(r.status)).length;
@@ -1545,6 +1535,16 @@ export default function StromflytPage() {
                 </button>
               );
             })}
+            <div className="sidenav-merke">VISNINGER</div>
+            <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+              <span>Oversikt</span>
+            </button>
+            <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
+              <span>Arbeidsliste</span>
+            </button>
+            <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
+              <span>Registrering</span>
+            </button>
             <div className="sidenav-fot">
               Registeret erstatter strømavtale-Excel-arket. Fram til Entelios-integrasjonen er på plass sendes bestillinger på mail.
             </div>
@@ -1587,8 +1587,8 @@ export default function StromflytPage() {
             <div className="overview-2col">
               <div className="panel livslop">
                 <div className="hd">
-                  <div><h2>Livsløp</h2></div>
-                  <span className="sub">{tiles.total} målepunkt</span>
+                  <div><h2>Livsløp</h2><span className="sub">statusfordeling over {STAGES.length} trinn</span></div>
+                  <span className="sub">Kladd → Aktiv</span>
                 </div>
                 <div className="livslop-rows">
                   {livslop.map((s, i) => (
@@ -2444,8 +2444,9 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .import-org{display:grid;grid-template-columns:220px minmax(260px,420px) 1fr;align-items:center;gap:12px;padding:16px 18px}.import-org label{font-size:13px;font-weight:620}.import-org span{font-size:12px;color:var(--sf-ink-3)}
 .excel-sheet-picker{display:grid;grid-template-columns:80px minmax(280px,480px) 1fr;align-items:center;gap:12px;padding:16px 18px}.excel-sheet-picker label{font-size:13px;font-weight:620}.excel-sheet-picker span{font-size:12px;color:var(--sf-ink-3)}
 .mapping-table{border:0;border-radius:0}.mapping-table td{vertical-align:middle}.mapping-table input,.mapping-table select{max-width:220px}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.tile{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;padding:14px 16px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:20px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;overflow:hidden}
+.tile{padding:14px 16px;border-left:1px solid var(--sf-border)}
+.tile:first-child{border-left:0}
 .tile .k{font-size:12px;color:var(--sf-ink-3);letter-spacing:.03em;text-transform:uppercase}
 .tile .v{font-size:27px;font-weight:680;letter-spacing:-.02em;margin-top:3px}
 .tile .v small{font-size:14px;font-weight:500;color:var(--sf-ink-3)}
@@ -2557,12 +2558,13 @@ td .muted{color:var(--sf-ink-3)}
   .sidenav-merke,.sidenav-fot{display:none}
   .sidenav button{width:auto;white-space:nowrap}
 }
-@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.overview-2col{grid-template-columns:1fr}.priokoer{grid-template-columns:1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
+@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.tile:nth-child(odd){border-left:0}.tile:nth-child(n+3){border-top:1px solid var(--sf-border)}.overview-queues{grid-template-columns:1fr 1fr}.overview-2col{grid-template-columns:1fr}.priokoer{grid-template-columns:1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 /* premium polish */
 .topbar{box-shadow:0 1px 0 rgba(0,0,0,.15),0 2px 14px rgba(16,32,45,.18);z-index:30}
 .brand-panel{background:linear-gradient(155deg,#1a3a53,var(--sf-navy));margin:-1px 0;align-self:stretch}
-.tile{border-radius:13px;padding:19px 21px;box-shadow:var(--sf-shadow);transition:box-shadow .18s,transform .18s}
+.tiles{border-radius:13px;box-shadow:var(--sf-shadow)}
+.tile{padding:19px 21px}
 .tile .v{font-size:33px;letter-spacing:-.03em;margin-top:5px}
 .panel,.work-toolbar,.tablewrap,.upload-card,.import-summary{border-radius:13px;box-shadow:var(--sf-shadow)}
 .overview-queues button,.work-queues button{border-radius:12px;box-shadow:var(--sf-shadow);transition:border-color .15s,box-shadow .18s,transform .18s}
