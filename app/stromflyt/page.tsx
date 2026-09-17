@@ -430,9 +430,40 @@ export default function StromflytPage() {
     const gwhBekreftet = sumKwh(bekreftetAvEntelios) / 1_000_000;
     const registrertUtenForbruk = registrertHosEntelios.filter((r) => !r.aarsforbruk_kwh).length;
 
+    const enUkeSiden = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const nyeDenneUken = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= enUkeSiden).length;
+
     return {
-      total: rows.length, trenger, eierskifte, spotavtale, ikkeAvklart,
+      total: rows.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
+    };
+  }, [rows]);
+
+  // Livsløp: antall målepunkt per steg i statuslinjen, til den vannrette
+  // stolpelisten i Oversikt - viser hvor "tykk" hver fase er akkurat nå.
+  const livslop = useMemo(() => {
+    const maks = Math.max(1, ...STAGES.map((s) => rows.filter((r) => r.status === s).length));
+    return STAGES.map((s) => ({ status: s, antall: rows.filter((r) => r.status === s).length, maks }));
+  }, [rows]);
+
+  // Prioriterte køer på Oversikt - de tre køene som faktisk trenger en
+  // konkret handling fra noen, med de eldste/mest presserende radene synlig
+  // med en direkte handlingsknapp, i stedet for bare et tall å klikke seg inn på.
+  const prioriterteKoer = useMemo(() => {
+    const dagerSiden = (iso?: string) => {
+      if (!iso) return null;
+      return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000)));
+    };
+    const ikkeMeldtInn = rows.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling");
+    const venterPaEntelios = rows.filter((r) => r.status === "Sendt Entelios");
+    const cloudOppsett = rows.filter((r) => r.status === "Satt opp i Cloud");
+    return {
+      ikkeMeldtInn: { total: ikkeMeldtInn.length, rader: ikkeMeldtInn.slice(0, 2) },
+      venterPaEntelios: {
+        total: venterPaEntelios.length,
+        rader: venterPaEntelios.slice(0, 2).map((r) => ({ rad: r, dager: dagerSiden(r.updated_at) })),
+      },
+      cloudOppsett: { total: cloudOppsett.length, rader: cloudOppsett.slice(0, 2) },
     };
   }, [rows]);
 
@@ -457,7 +488,9 @@ export default function StromflytPage() {
       if (year !== volumChartYear || month < 0 || month > 11) continue;
       perMonth[month] += (r.aarsforbruk_kwh || 0) / 1_000_000;
     }
-    return { years: years.length ? years : [volumChartYear], perMonth, maks: Math.max(...perMonth, 0.01) };
+    const naa = new Date();
+    const naavarendeManed = volumChartYear === naa.getFullYear() ? naa.getMonth() : -1;
+    return { years: years.length ? years : [volumChartYear], perMonth, maks: Math.max(...perMonth, 0.01), naavarendeManed };
   }, [rows, volumChartYear]);
 
   function set<K extends keyof Malepunkt>(k: K, v: Malepunkt[K]) {
@@ -1495,12 +1528,19 @@ export default function StromflytPage() {
             <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
               <span>Oversikt</span>
             </button>
-            {WORK_FILTERS.map((f) => {
-              const count = f.statuses.length ? rows.filter((r) => f.statuses.includes(r.status)).length : rows.length;
+            <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
+              <span>Arbeidsliste</span>
+            </button>
+            <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
+              <span>Registrering</span>
+            </button>
+            <div className="sidenav-merke">ARBEIDSKØER</div>
+            {WORK_FILTERS.filter((f) => f.key).map((f) => {
+              const count = rows.filter((r) => f.statuses.includes(r.status)).length;
               const active = tab === "reg" && workFilter === f.key;
               return (
-                <button key={f.key || "all"} className={active ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(f.key); setFltStatus(""); }}>
-                  <span>{f.key === "" ? "Arbeidsliste" : f.label}</span>
+                <button key={f.key} className={active ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(f.key); setFltStatus(""); }}>
+                  <span>{f.label}</span>
                   {count > 0 && <span className={`sidenav-tall${f.key === "handling" ? " varsel" : ""}`}>{count}</span>}
                 </button>
               );
@@ -1522,9 +1562,20 @@ export default function StromflytPage() {
             </div>
 
             <div className="tiles">
-              <Tile k="Målepunkt totalt" v={String(tiles.total)} />
+              <Tile k="Målepunkt totalt" v={String(tiles.total)} sub={tiles.nyeDenneUken > 0 ? `+${tiles.nyeDenneUken} denne uken` : undefined} />
               <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
-              <Tile k="Eierskifte / Spotavtale" v={`${tiles.eierskifte} / ${tiles.spotavtale}`} sub={`${tiles.ikkeAvklart} ikke avklart ennå`} alert={tiles.ikkeAvklart > 0} />
+              <Tile
+                k="Eierskifte / Spotavtale"
+                v={`${tiles.eierskifte} / ${tiles.spotavtale}`}
+                sub={`${tiles.ikkeAvklart} ikke avklart ennå`}
+                alert={tiles.ikkeAvklart > 0}
+                bar={tiles.total > 0 ? (
+                  <div className="tile-bar" title={`${tiles.eierskifte} eierskifte · ${tiles.spotavtale} spotavtale · ${tiles.ikkeAvklart} ikke avklart`}>
+                    <span style={{ width: `${(tiles.eierskifte / tiles.total) * 100}%` }} className="seg-1" />
+                    <span style={{ width: `${(tiles.spotavtale / tiles.total) * 100}%` }} className="seg-2" />
+                  </div>
+                ) : undefined}
+              />
               <Tile
                 k="GWh registrert hos Entelios"
                 v={`${tiles.gwhRegistrert.toFixed(2)} GWh`}
@@ -1533,36 +1584,87 @@ export default function StromflytPage() {
               />
             </div>
 
-            <div className="panel volum-chart">
-              <div className="hd">
-                <div><h2>Registrert volum per måned</h2><span className="sub">Estimert årsforbruk (GWh) for målepunkt sendt til Entelios eller lenger, fordelt på avtalt oppstartsmåned - ikke ekte målt forbruk</span></div>
-                <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
-                  {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
-                </select>
-              </div>
-              <div className="volum-bars">
-                {MANEDSNAVN.map((navn, i) => (
-                  <div className="volum-bar-col" key={navn}>
-                    <div className="volum-bar-track" title={`${volumChart.perMonth[i].toFixed(2)} GWh`}>
-                      <div className="volum-bar" style={{ height: `${(volumChart.perMonth[i] / volumChart.maks) * 100}%` }} />
+            <div className="overview-2col">
+              <div className="panel livslop">
+                <div className="hd">
+                  <div><h2>Livsløp</h2></div>
+                  <span className="sub">{tiles.total} målepunkt</span>
+                </div>
+                <div className="livslop-rows">
+                  {livslop.map((s, i) => (
+                    <div className="livslop-row" key={s.status}>
+                      <span className="livslop-label">{displayStatus(s.status)}</span>
+                      <div className="livslop-track">
+                        <span className="livslop-fill" style={{ width: `${(s.antall / s.maks) * 100}%`, opacity: 0.35 + (i / (STAGES.length - 1)) * 0.65 }} />
+                      </div>
+                      <span className="livslop-antall">{s.antall}</span>
                     </div>
-                    <span className="volum-bar-val">{volumChart.perMonth[i] > 0 ? volumChart.perMonth[i].toFixed(1) : ""}</span>
-                    <span className="volum-bar-label">{navn}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+
+              <div className="panel volum-chart">
+                <div className="hd">
+                  <div><h2>Registrert volum</h2><span className="sub">GWh · estimert, ikke målt forbruk</span></div>
+                  <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
+                    {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div className="volum-bars">
+                  {MANEDSNAVN.map((navn, i) => (
+                    <div className="volum-bar-col" key={navn}>
+                      <div className="volum-bar-track" title={`${volumChart.perMonth[i].toFixed(2)} GWh`}>
+                        <div className={"volum-bar" + (i === volumChart.naavarendeManed ? " naa" : "")} style={{ height: `${(volumChart.perMonth[i] / volumChart.maks) * 100}%` }} />
+                      </div>
+                      <span className="volum-bar-val">{volumChart.perMonth[i] > 0 ? volumChart.perMonth[i].toFixed(1) : ""}</span>
+                      <span className="volum-bar-label">{navn}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
             <div className="overview-section-heading">
-              <div><h2>Status og arbeidskøer</h2><span>Velg en kø for å åpne den i arbeidslisten</span></div>
+              <div><h2>Prioriterte køer</h2><span>De køene som trenger en handling nå</span></div>
+              <button className="link-btn" onClick={() => { setTab("reg"); setWorkFilter(""); }}>Åpne arbeidsliste →</button>
             </div>
-            <div className="overview-queues">
-              {WORK_FILTERS.filter((f) => f.key).map((f) => {
-                const count = rows.filter((r) => f.statuses.includes(r.status)).length;
-                return <button key={f.key} onClick={() => { setWorkFilter(f.key); setFltStatus(""); setTab("reg"); }}>
-                  <span>{f.label}</span><b className="num">{count}</b><small>Åpne arbeidsliste →</small>
-                </button>;
-              })}
+            <div className="priokoer">
+              <div className="priokort">
+                <div className="priokort-hd"><span className="dot varsel" />Ikke meldt inn<b>{prioriterteKoer.ikkeMeldtInn.total}</b></div>
+                {prioriterteKoer.ikkeMeldtInn.rader.map((r) => (
+                  <div className="priorad" key={r.id}>
+                    <div><b>{r.kunde || "Uten kunde"}</b><span>MPID {r.maalepunkt_id || "ikke satt"}</span></div>
+                    <button className="btn sm" onClick={() => startEdit(r)}>Fyll ut</button>
+                  </div>
+                ))}
+                {prioriterteKoer.ikkeMeldtInn.total > 2 && (
+                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("handling"); }}>+{prioriterteKoer.ikkeMeldtInn.total - 2} til · alle i køen</button>
+                )}
+              </div>
+              <div className="priokort">
+                <div className="priokort-hd"><span className="dot venter" />Venter på Entelios<b>{prioriterteKoer.venterPaEntelios.total}</b></div>
+                {prioriterteKoer.venterPaEntelios.rader.map(({ rad: r, dager }) => (
+                  <div className="priorad" key={r.id}>
+                    <div><b>{r.kunde || "Uten kunde"}</b><span>{dager !== null ? `Sendt for ${dager} dag${dager === 1 ? "" : "er"} siden` : "Sendt"}</span></div>
+                    <button className="btn sm" onClick={() => startEdit(r)}>Følg opp</button>
+                  </div>
+                ))}
+                {prioriterteKoer.venterPaEntelios.total > 2 && (
+                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("venter"); }}>+{prioriterteKoer.venterPaEntelios.total - 2} til · alle i køen</button>
+                )}
+              </div>
+              <div className="priokort">
+                <div className="priokort-hd"><span className="dot cloud" />Cloud-oppsett<b>{prioriterteKoer.cloudOppsett.total}</b></div>
+                {prioriterteKoer.cloudOppsett.rader.map((r) => (
+                  <div className="priorad" key={r.id}>
+                    <div><b>{r.kunde || "Uten kunde"}</b><span>{r.tsdb_id ? "tsdb_id satt" : "tsdb_id mangler"}</span></div>
+                    <button className="btn sm" onClick={() => sjekkICloud(r)}>Sjekk Cloud</button>
+                  </div>
+                ))}
+                {prioriterteKoer.cloudOppsett.total > 2 && (
+                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("cloud"); }}>+{prioriterteKoer.cloudOppsett.total - 2} til · alle i køen</button>
+                )}
+              </div>
             </div>
           </section>
         )}
@@ -2235,11 +2337,12 @@ export default function StromflytPage() {
   );
 }
 
-function Tile({ k, v, sub, alert }: { k: string; v: string; sub?: string; alert?: boolean }) {
+function Tile({ k, v, sub, alert, bar }: { k: string; v: string; sub?: string; alert?: boolean; bar?: ReactNode }) {
   return (
     <div className={"tile" + (alert ? " alert" : "")}>
       <div className="k">{k}</div>
       <div className="v">{v}{sub ? <small> {sub}</small> : null}</div>
+      {bar}
     </div>
   );
 }
@@ -2327,6 +2430,7 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .import-page{width:100%;max-width:none}
 .page-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.page-heading h1{font-size:24px;letter-spacing:-.02em}.page-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
 .overview-section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin:4px 0 12px}.overview-section-heading h2{font-size:16px}.overview-section-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
+.link-btn{font:inherit;background:none;border:0;color:var(--sf-accent);font-weight:610;cursor:pointer;padding:2px}.link-btn:hover{text-decoration:underline}
 .overview-queues{display:grid;grid-template-columns:repeat(5,minmax(170px,1fr));gap:12px}.overview-queues button{font:inherit;text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:16px;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}.overview-queues button:hover{border-color:var(--sf-accent);box-shadow:0 4px 18px rgba(26,34,48,.06)}.overview-queues button span{font-weight:580}.overview-queues button b{grid-row:1/3;grid-column:2;font-size:24px;color:var(--sf-ink)}.overview-queues button small{font-size:12px;color:var(--sf-accent)}
 .upload-card{background:var(--sf-surface);border-radius:12px;padding:22px 24px;margin-bottom:20px}
 .upload-card h2{font-size:19px;text-align:center}.upload-card p{margin:5px 0 0;color:var(--sf-ink-2);max-width:560px;text-align:center}
@@ -2346,13 +2450,37 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .tile .v{font-size:27px;font-weight:680;letter-spacing:-.02em;margin-top:3px}
 .tile .v small{font-size:14px;font-weight:500;color:var(--sf-ink-3)}
 .tile.alert .v{color:var(--sf-warn)}
+.tile-bar{display:flex;height:5px;border-radius:999px;overflow:hidden;background:var(--sf-surface-2);margin-top:10px}
+.tile-bar .seg-1{display:block;height:100%;background:var(--sf-accent)}
+.tile-bar .seg-2{display:block;height:100%;background:var(--sf-accent-soft)}
+.overview-2col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch}
 .volum-chart .hd{align-items:flex-start;justify-content:space-between}.volum-chart .hd select{margin-left:12px}
-.volum-bars{display:flex;align-items:flex-end;gap:10px;padding:20px 18px 14px;height:180px}
+.volum-bars{display:flex;align-items:flex-end;gap:8px;padding:20px 16px 14px;height:160px}
 .volum-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
-.volum-bar-track{flex:1;display:flex;align-items:flex-end;width:100%;max-width:38px}
-.volum-bar{width:100%;background:var(--sf-accent);border-radius:4px 4px 0 0;min-height:2px;transition:height .2s}
+.volum-bar-track{flex:1;display:flex;align-items:flex-end;width:100%;max-width:32px}
+.volum-bar{width:100%;background:var(--sf-accent-soft);border-radius:4px 4px 0 0;min-height:2px;transition:height .2s}
+.volum-bar.naa{background:var(--sf-accent)}
 .volum-bar-val{font-size:11px;color:var(--sf-ink-3);margin-top:6px;height:14px}
 .volum-bar-label{font-size:12px;color:var(--sf-ink-2);margin-top:2px}
+.livslop-rows{padding:14px 18px 18px;display:flex;flex-direction:column;gap:10px}
+.livslop-row{display:grid;grid-template-columns:130px 1fr 26px;align-items:center;gap:10px}
+.livslop-label{font-size:13px;color:var(--sf-ink-2)}
+.livslop-track{height:8px;border-radius:999px;background:var(--sf-surface-2);overflow:hidden}
+.livslop-fill{display:block;height:100%;background:var(--sf-accent);border-radius:999px;min-width:2px;transition:width .2s}
+.livslop-antall{font-size:13px;font-weight:620;text-align:right}
+.priokoer{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+.priokort{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;padding:14px 16px}
+.priokort-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:620;color:var(--sf-ink-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.02em}
+.priokort-hd b{margin-left:auto;font-size:15px;color:var(--sf-ink);font-weight:700}
+.priokort-hd .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.priokort-hd .dot.varsel{background:var(--sf-warn)}.priokort-hd .dot.venter{background:var(--sf-accent)}.priokort-hd .dot.cloud{background:#7c6fe0}
+.priorad{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-top:1px solid var(--sf-border)}
+.priorad:first-of-type{border-top:0}
+.priorad div{min-width:0}
+.priorad b{display:block;font-size:13.5px;font-weight:610;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.priorad span{display:block;font-size:12px;color:var(--sf-ink-3);margin-top:1px}
+.priokort-mer{font:inherit;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--sf-border);color:var(--sf-ink-3);font-size:12.5px;padding:9px 0 0;margin-top:2px;cursor:pointer}
+.priokort-mer:hover{color:var(--sf-accent)}
 .panel{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;margin-bottom:20px}
 .panel>.hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--sf-border)}
 .panel>.hd h2{font-size:15px;font-weight:620}
@@ -2429,7 +2557,7 @@ td .muted{color:var(--sf-ink-3)}
   .sidenav-merke,.sidenav-fot{display:none}
   .sidenav button{width:auto;white-space:nowrap}
 }
-@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
+@media (max-width:780px){.tiles{grid-template-columns:repeat(2,1fr)}.overview-queues{grid-template-columns:1fr 1fr}.overview-2col{grid-template-columns:1fr}.priokoer{grid-template-columns:1fr}.page-heading,.worklist-heading{align-items:flex-start}.topbar{grid-template-columns:1fr auto;grid-template-rows:auto auto;padding:10px 12px;gap:8px}.globalsok{grid-column:1/-1;order:3;justify-self:stretch;width:100%}.brand-panel{padding:0}.intake{grid-template-columns:1fr}.sf-root fieldset{grid-column:1/-1}.summary-grid{grid-template-columns:1fr 1fr}.import-org,.excel-sheet-picker{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 /* premium polish */
 .topbar{box-shadow:0 1px 0 rgba(0,0,0,.15),0 2px 14px rgba(16,32,45,.18);z-index:30}
