@@ -56,6 +56,10 @@ export type CloudLookupResult =
       adresse: string | null;
       malenummer: string | null;
       tsdb_id: string | null;
+      // Selve målerens ID i Cloud (ikke tsdb_id, som er tilkoblingen til
+      // tidsseriedatabasen) - trengs for å slå opp faktisk forbruk senere
+      // via /v0/metrics/data uten å måtte gjøre et helt nytt org-oppslag.
+      cloud_metric_id: string;
       hovedmaaler: boolean;
       foreslatt_status: "Aktiv" | "Satt opp i Cloud";
       metode: string;
@@ -206,6 +210,7 @@ export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName
       adresse: treff.building?.address ?? null,
       malenummer: treff.currentMeter?.serial ?? null,
       tsdb_id: treff.currentMeter?.tsdbId ?? null,
+      cloud_metric_id: treff.id,
       hovedmaaler: !!treff.mainImported,
       foreslatt_status: iDrift ? "Aktiv" : "Satt opp i Cloud",
       metode: brukteMetode,
@@ -214,4 +219,89 @@ export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName
     const msg = e instanceof Error ? e.message : "ukjent feil";
     return { ok: false, error: "Kunne ikke slå opp i Adaptic Cloud: " + msg };
   }
+}
+
+// ---------- Faktisk forbruk (ekte målerdata, ikke estimat) ----------
+//
+// Skiller seg fra oppslaget over: der leter vi etter ETT målepunkt via
+// eno-matching mot /v0/metrics. Her har vi ALLEREDE cloud_metric_id lagret
+// fra et tidligere "Sjekk i Cloud"-oppslag, og trenger bare et gyldig
+// bearer-token for riktig organisasjon for å hente selve tallene via
+// /v0/metrics/data (samme endepunkt som Adaptic Cloud sitt eget dashbord
+// bruker, se MetricController.getMultipleMetricsData i apiserver).
+
+interface TimeseriesPoint { timestamp?: string; ts?: string; value: number | null }
+
+// Henter et gyldig bearer-token for én organisasjon - egen funksjon (ikke
+// bare en bieffekt av tryMintedToken) fordi forbruksoppslaget grupperer
+// mange målepunkt PER organisasjon og bare trenger token én gang per
+// gruppe, ikke én gang per målepunkt.
+export async function hentTokenForOrg(cloudOrgName: string): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
+  const adminToken = process.env.ADAPTIC_CLOUD_ADMIN_TOKEN;
+  if (!adminToken) return { ok: false, error: "Mangler ADAPTIC_CLOUD_ADMIN_TOKEN" };
+
+  // Direktetokenet dekker som regel bare én organisasjon (det som ble brukt
+  // til å opprette det) - dupliserer derfor ikke logikken for å avgjøre
+  // HVILKEN, og prøver heller alltid minting via org-navnet først, siden det
+  // er den tolkningen som faktisk har vist seg å fungere i praksis.
+  const orgsRes = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
+  if (orgsRes.ok && Array.isArray(orgsRes.body)) {
+    const orgs = orgsRes.body as CloudOrg[];
+    const needle = normalizeOrgName(cloudOrgName);
+    const exact = orgs.find((o) => normalizeOrgName(o.name) === needle);
+    const fuzzy = exact ? [exact] : orgs.filter((o) => {
+      const n = normalizeOrgName(o.name);
+      return n.includes(needle) || needle.includes(n);
+    });
+    if (fuzzy.length === 1) {
+      const mintRes = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations/${fuzzy[0].id}/internal_token`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ writeAccess: false }),
+        cache: "no-store",
+      });
+      if (mintRes.ok) {
+        const mintData = (await mintRes.json().catch(() => null)) as { token: string } | null;
+        if (mintData?.token) return { ok: true, token: mintData.token };
+      }
+    }
+  }
+  // Fallback: direktetokenet virker for noen oppsett (se sjekk-malepunkt).
+  const direct = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { Authorization: `Bearer ${adminToken}` });
+  if (direct.ok) return { ok: true, token: adminToken };
+  return { ok: false, error: `fant ikke gyldig token for org «${cloudOrgName}»` };
+}
+
+// Summerer faktisk kWh per måned for et sett målere, for ett kalenderår.
+// Returnerer null for målere uten data i en gitt måned (padding), som
+// telles som 0 i summen - en måler som ikke er koblet til ennå skal ikke
+// forsvinne fra tallet, bare bidra med 0.
+export async function hentMaanedsforbruk(
+  token: string,
+  metricIds: string[],
+  year: number,
+): Promise<{ ok: true; perMonthKwh: number[] } | { ok: false; error: string }> {
+  if (!metricIds.length) return { ok: true, perMonthKwh: Array(12).fill(0) };
+  const from = `${year}-01-01T00:00:00Z`;
+  const to = `${year + 1}-01-01T00:00:00Z`;
+  const qs = new URLSearchParams({ from, to, resolution: "MONTH", rollup: "SUM", padding: "true" });
+  const res = await fetch(`${CLOUD_API_BASE}/v1/metrics/data?${qs.toString()}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(metricIds),
+    cache: "no-store",
+  });
+  if (!res.ok) return { ok: false, error: `/v1/metrics/data avvist (HTTP ${res.status})` };
+  const body = (await res.json().catch(() => null)) as Record<string, TimeseriesPoint[]> | null;
+  if (!body) return { ok: false, error: "Uventet svar fra /v1/metrics/data" };
+
+  const perMonthKwh = Array(12).fill(0);
+  for (const points of Object.values(body)) {
+    if (!Array.isArray(points)) continue;
+    points.forEach((p, i) => {
+      if (i > 11) return; // ett år, aldri mer enn 12 punkter forventet
+      if (typeof p?.value === "number") perMonthKwh[i] += p.value;
+    });
+  }
+  return { ok: true, perMonthKwh };
 }

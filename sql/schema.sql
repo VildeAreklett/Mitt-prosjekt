@@ -15,6 +15,7 @@ create table if not exists public.strombestillinger (
   -- datastrøm-tilkoblingen i Adaptic Cloud sin tidsseriedatabase, hentet via
   -- "Sjekk i Cloud" - se migration-009.
   tsdb_id text,
+  cloud_metric_id text,
   cloud_org         text not null,
 
   -- anlegg

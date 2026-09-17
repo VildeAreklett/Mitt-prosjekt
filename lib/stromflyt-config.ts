@@ -73,6 +73,7 @@ export interface Malepunkt {
   // Datastrøm-tilkoblingen i Adaptic Cloud sin tidsseriedatabase - hentet
   // automatisk via "Sjekk i Cloud", null til det er bekreftet.
   tsdb_id: string | null;
+  cloud_metric_id: string | null;
   cloud_org: string;
   bygg: string;
   adresse: string;

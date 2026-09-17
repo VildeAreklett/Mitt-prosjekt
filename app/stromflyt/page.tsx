@@ -502,7 +502,35 @@ export default function StromflytPage() {
   // rene datostrenger (samme grunn som resten av filen aldri Date-parser
   // dette feltet, bare sammenligner det som tekst).
   const [volumChartYear, setVolumChartYear] = useState(() => new Date().getFullYear());
-  const [volumVisning, setVolumVisning] = useState<"maned" | "kumulativt">("maned");
+  const [volumVisning, setVolumVisning] = useState<"maned" | "kumulativt" | "faktisk">("maned");
+  // Faktisk (ekte, målt) forbruk hentes fra Cloud på forespørsel, ikke i
+  // samme useMemo som resten av volum-grafen - det er et nettverkskall, ikke
+  // en lokal utregning fra rows.
+  const [faktiskForbruk, setFaktiskForbruk] = useState<{ perMonthGwh: number[]; antallMalere: number; feilmeldinger: string[] } | null>(null);
+  const [faktiskLaster, setFaktiskLaster] = useState(false);
+  const [faktiskFeil, setFaktiskFeil] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (volumVisning !== "faktisk") return;
+    let avbrutt = false;
+    setFaktiskLaster(true);
+    setFaktiskFeil(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/cloud/forbruk?year=${volumChartYear}`, { headers: await stromflytAuthHeaders() });
+        const data = await res.json();
+        if (avbrutt) return;
+        if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke hente faktisk forbruk");
+        setFaktiskForbruk(data);
+      } catch (e: any) {
+        if (!avbrutt) setFaktiskFeil(e.message ?? String(e));
+      } finally {
+        if (!avbrutt) setFaktiskLaster(false);
+      }
+    })();
+    return () => { avbrutt = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volumVisning, volumChartYear]);
   const volumChart = useMemo(() => {
     const registrert = rows.filter(
       (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios") && /^\d{4}-\d{2}/.test(r.avtalt_oppstart)
@@ -773,6 +801,7 @@ export default function StromflytPage() {
           kontaktperson_navn: "",
           kontaktperson_epost: "",
           tsdb_id: null,
+          cloud_metric_id: null,
         }, fakturaRute ? "Innmeldt" : "Kladd");
         ok += 1;
       } catch (e: any) {
@@ -911,6 +940,7 @@ export default function StromflytPage() {
           kontaktperson_navn: "",
           kontaktperson_epost: "",
           tsdb_id: null,
+          cloud_metric_id: null,
         }, r.status_suggestion);
         if (mapping.selger.trim()) await updateCustomerSeller(mapping.org_nr, mapping.selger);
         ok += 1;
@@ -968,6 +998,7 @@ export default function StromflytPage() {
           kontaktperson_navn: "",
           kontaktperson_epost: "",
           tsdb_id: null,
+          cloud_metric_id: null,
         });
         if (importSeller.trim()) await updateCustomerSeller(parsed.org_nr, importSeller);
         ok += 1;
@@ -1166,10 +1197,13 @@ export default function StromflytPage() {
       }
       // Lagre tsdb_id permanent på raden, ikke bare vise den i en toast - så
       // den kan tas ut i Excel og sendes videre til Entelios på historiske
-      // målere som allerede er koblet opp i Cloud.
-      if (data.tsdb_id && data.tsdb_id !== r.tsdb_id) {
-        await updateMalepunktDetails(r.id, { tsdb_id: data.tsdb_id });
-      }
+      // målere som allerede er koblet opp i Cloud. cloud_metric_id lagres
+      // samtidig - trengs for å hente faktisk forbruk senere uten et nytt
+      // org-oppslag (se "Faktisk forbruk" i Oversikt).
+      const detaljer: Partial<Malepunkt> = {};
+      if (data.tsdb_id && data.tsdb_id !== r.tsdb_id) detaljer.tsdb_id = data.tsdb_id;
+      if (data.cloud_metric_id && data.cloud_metric_id !== r.cloud_metric_id) detaljer.cloud_metric_id = data.cloud_metric_id;
+      if (Object.keys(detaljer).length > 0) await updateMalepunktDetails(r.id, detaljer);
       return {
         ok: true,
         funnet: true,
@@ -1242,6 +1276,7 @@ export default function StromflytPage() {
         kontaktperson_navn: form.kontaktperson_navn?.trim() || "",
         kontaktperson_epost: form.kontaktperson_epost?.trim() || "",
         tsdb_id: form.tsdb_id ?? null,
+        cloud_metric_id: form.cloud_metric_id ?? null,
       };
       if (editingId) {
         await updateMalepunktDetails(editingId, payload);
@@ -1807,15 +1842,22 @@ export default function StromflytPage() {
                   <div>
                     <h2>Registrert volum</h2>
                     <span className="sub">
-                      {volumVisning === "maned"
-                        ? "GWh nytt volum per måned · estimert, ikke målt forbruk"
-                        : `GWh totalt akkumulert · estimert helårstotal ${volumChart.total.toFixed(2)} GWh`}
+                      {volumVisning === "maned" && "GWh nytt volum per måned · estimert, ikke målt forbruk"}
+                      {volumVisning === "kumulativt" && `GWh totalt akkumulert · estimert helårstotal ${volumChart.total.toFixed(2)} GWh`}
+                      {volumVisning === "faktisk" && (
+                        faktiskLaster ? "Henter faktisk forbruk fra Cloud …"
+                        : faktiskFeil ? `Kunne ikke hente: ${faktiskFeil}`
+                        : faktiskForbruk
+                        ? `GWh faktisk målt · ${faktiskForbruk.antallMalere} målere satt opp i Cloud${faktiskForbruk.feilmeldinger.length ? ` · ${faktiskForbruk.feilmeldinger.length} organisasjon(er) feilet` : ""}`
+                        : ""
+                      )}
                     </span>
                   </div>
                   <div className="volum-chart-valg">
                     <div className="seg-toggle">
                       <button className={volumVisning === "maned" ? "active" : ""} onClick={() => setVolumVisning("maned")}>Per måned</button>
                       <button className={volumVisning === "kumulativt" ? "active" : ""} onClick={() => setVolumVisning("kumulativt")}>Kumulativt</button>
+                      <button className={volumVisning === "faktisk" ? "active" : ""} onClick={() => setVolumVisning("faktisk")}>Faktisk forbruk</button>
                     </div>
                     <select value={volumChartYear} onChange={(e) => setVolumChartYear(Number(e.target.value))}>
                       {volumChart.years.map((y) => <option key={y} value={y}>{y}</option>)}
@@ -1824,8 +1866,15 @@ export default function StromflytPage() {
                 </div>
                 <div className="volum-bars">
                   {MANEDSNAVN.map((navn, i) => {
-                    const verdi = volumVisning === "maned" ? volumChart.perMonth[i] : volumChart.kumulativt[i];
-                    const maks = volumVisning === "maned" ? volumChart.maks : volumChart.maksKumulativt;
+                    const verdi =
+                      volumVisning === "maned" ? volumChart.perMonth[i]
+                      : volumVisning === "kumulativt" ? volumChart.kumulativt[i]
+                      : faktiskForbruk?.perMonthGwh[i] ?? 0;
+                    const serie =
+                      volumVisning === "maned" ? volumChart.perMonth
+                      : volumVisning === "kumulativt" ? volumChart.kumulativt
+                      : faktiskForbruk?.perMonthGwh ?? [];
+                    const maks = Math.max(...serie, 0.01);
                     return (
                       <div className="volum-bar-col" key={navn}>
                         <div className="volum-bar-track" title={`${verdi.toFixed(2)} GWh`}>
