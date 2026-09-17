@@ -410,9 +410,6 @@ export default function StromflytPage() {
   }).length || 0, [excelSheet, excelSelected, excelMappings, rows]);
 
   const tiles = useMemo(() => {
-    const a = rows.filter((r) => r.rute === "A").length;
-    const b = rows.filter((r) => r.rute === "B").length;
-    const arr = rows.filter((r) => r.rute === "A").reduce((s, r) => s + (Number(r.fast_aarspris) || 0), 0);
     const trenger = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length;
     const eierskifte = rows.filter((r) => r.avtaletype === "Eierskifte").length;
     const spotavtale = rows.filter((r) => r.avtaletype === "Spotavtale").length;
@@ -434,7 +431,7 @@ export default function StromflytPage() {
     const registrertUtenForbruk = registrertHosEntelios.filter((r) => !r.aarsforbruk_kwh).length;
 
     return {
-      total: rows.length, a, b, arr, trenger, eierskifte, spotavtale, ikkeAvklart,
+      total: rows.length, trenger, eierskifte, spotavtale, ikkeAvklart,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
     };
   }, [rows]);
@@ -1526,8 +1523,6 @@ export default function StromflytPage() {
 
             <div className="tiles">
               <Tile k="Målepunkt totalt" v={String(tiles.total)} />
-              <Tile k="Rute A / B" v={`${tiles.a} / ${tiles.b}`} sub="leietaker / strømsalg" />
-              <Tile k="Fast årspris (ARR)" v={`${fmt(tiles.arr)} kr`} sub="rute A samlet" />
               <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile k="Eierskifte / Spotavtale" v={`${tiles.eierskifte} / ${tiles.spotavtale}`} sub={`${tiles.ikkeAvklart} ikke avklart ennå`} alert={tiles.ikkeAvklart > 0} />
               <Tile
