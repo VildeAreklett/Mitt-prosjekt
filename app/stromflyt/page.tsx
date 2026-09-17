@@ -36,6 +36,9 @@ import {
   listHistory,
   markBatchSent,
   type HistoryEvent,
+  listNyeAvtaler,
+  settNyAvtaleStatus,
+  type NyAvtale,
 } from "../../lib/stromflyt-api";
 import type { ParsedAvtale } from "../../lib/avtale-parser";
 import type { ParsedExcelWorkbook, ParsedExcelRow, ParsedExcelSheet } from "../../lib/excel-parser";
@@ -134,7 +137,10 @@ const emptyForm: Partial<Malepunkt> = {
 
 export default function StromflytPage() {
   const requireAuth = process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true";
-  const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel" | "faktura">("reg");
+  const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel" | "faktura" | "nye">("reg");
+  // Avtaler sendt hit fra fakturakontroll, som ennå ikke har målepunkter.
+  const [nyeAvtaler, setNyeAvtaler] = useState<NyAvtale[]>([]);
+  const [nyeJobber, setNyeJobber] = useState<string | null>(null);
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -282,9 +288,22 @@ export default function StromflytPage() {
 
   async function refresh() {
     setLoading(true);
-    try { setRows(await listMalepunkt()); setErr(null); }
+    try {
+      setRows(await listMalepunkt());
+      // Køen fra fakturakontroll hentes samtidig. Feiler den — typisk fordi
+      // migrasjonen ikke er kjørt — skal ikke resten av siden ryke med.
+      try { setNyeAvtaler(await listNyeAvtaler()); } catch { setNyeAvtaler([]); }
+      setErr(null);
+    }
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setLoading(false); }
+  }
+
+  async function settNyStatus(a: NyAvtale, status: NyAvtale["status"]) {
+    setNyeJobber(a.id);
+    try { await settNyAvtaleStatus(a.id, status); await refresh(); flash(`«${a.avtalenavn}» satt til ${status}.`); }
+    catch (e: any) { setErr(e.message ?? String(e)); }
+    finally { setNyeJobber(null); }
   }
   function flash(m: string) {
     // Flere flash()-kall etter hverandre (f.eks. "Sjekker i Cloud …" fulgt av
@@ -1525,6 +1544,17 @@ export default function StromflytPage() {
         <div className="app-body">
           <nav className="sidenav" aria-label="Hovedmeny">
             <div className="sidenav-merke">ARBEIDSKØER</div>
+            {/* Nye avtaler kommer automatisk fra fakturakontroll når en ren
+                strømleveranse blir signert. De har ingen målepunkter ennå, og
+                står derfor foran resten av løpet. */}
+            <button className={tab === "nye" ? "active" : ""} onClick={() => setTab("nye")}>
+              <span>Nye avtaler</span>
+              {nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length > 0 && (
+                <span className="sidenav-tall varsel">
+                  {nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length}
+                </span>
+              )}
+            </button>
             {WORK_FILTERS.filter((f) => f.key).map((f) => {
               const count = rows.filter((r) => f.statuses.includes(r.status)).length;
               const active = tab === "reg" && workFilter === f.key;
@@ -1553,6 +1583,79 @@ export default function StromflytPage() {
           <div className="content-shell">
       <main>
         {err && <div className="banner">Kunne ikke laste registeret: {err}</div>}
+
+        {tab === "nye" && (
+          <section>
+            <div className="worklist-heading">
+              <div>
+                <h1>Nye avtaler</h1>
+                <span>
+                  Signerte strømavtaler sendt hit fra fakturakontroll. De har ingen målepunkter
+                  ennå — registrer dem, og sett avtalen til «Klargjort» når den er på plass.
+                </span>
+              </div>
+            </div>
+
+            {nyeAvtaler.length === 0 ? (
+              <p className="muted" style={{ marginTop: 16 }}>
+                Ingen nye avtaler. De dukker opp her automatisk når en ren strømleveranse blir
+                signert og registrert i fakturakontrollen.
+              </p>
+            ) : (
+              <div className="panel" style={{ marginTop: 16, overflowX: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Avtale</th>
+                      <th>Signert</th>
+                      <th style={{ textAlign: "right" }}>Beløp</th>
+                      <th>Avtaledokument</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nyeAvtaler.map((a) => (
+                      <tr key={a.id} style={a.status === "Klargjort" || a.status === "Avvist" ? { opacity: 0.55 } : undefined}>
+                        <td><span className={"pill " + (a.status === "Klargjort" ? "s-aktiv" : a.status === "Avvist" ? "s-kladd" : "s-innmeldt")}>{a.status}</span></td>
+                        <td style={{ whiteSpace: "normal", minWidth: 260 }}>
+                          <strong>{a.avtalenavn}</strong>
+                          {(a.kunde || a.at_nummer) && (
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              {[a.kunde, a.at_nummer].filter(Boolean).join(" · ")}
+                            </div>
+                          )}
+                          {a.kommentar && <div className="muted" style={{ fontSize: 12 }}>{a.kommentar}</div>}
+                        </td>
+                        <td className="num">{a.signert_dato ?? "-"}</td>
+                        <td className="num">{a.belop != null ? Number(a.belop).toLocaleString("nb-NO") : "-"}</td>
+                        <td>
+                          {a.pandadoc_url
+                            ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne</a>
+                            : <span className="muted">-</span>}
+                        </td>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          {a.status !== "Klargjort" && (
+                            <button className="btn primary" disabled={nyeJobber === a.id}
+                              onClick={() => settNyStatus(a, "Klargjort")}>
+                              {nyeJobber === a.id ? "Lagrer ..." : "Klargjort"}
+                            </button>
+                          )}{" "}
+                          {a.status === "Ny" && (
+                            <button className="btn" disabled={nyeJobber === a.id}
+                              onClick={() => settNyStatus(a, "Under arbeid")}>
+                              Under arbeid
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
 
         {tab === "overview" && (
           <section className="overview-page">

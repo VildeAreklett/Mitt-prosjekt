@@ -157,3 +157,44 @@ export async function markBatchSent(ids: string[]): Promise<void> {
     .in("id", ids);
   if (error) throw error;
 }
+
+// ---------- Nye avtaler fra fakturakontroll ----------
+//
+// Fakturakontrollen sender rene strømavtaler hit så snart de er signert i
+// Pipedrive. De har ingen målepunkter ennå, og hører derfor ikke hjemme i
+// strombestillinger — den tabellen krever målepunkt-ID, netteier, prisområde
+// og årsforbruk. Køen under er forrommet: avtalen er kjent, men ikke
+// klargjort.
+
+export interface NyAvtale {
+  id: string;
+  kilde_id: string | null;
+  kunde: string;
+  avtalenavn: string;
+  signert_dato: string | null;
+  belop: number | null;
+  pandadoc_url: string;
+  at_nummer: string;
+  kommentar: string;
+  status: "Ny" | "Under arbeid" | "Klargjort" | "Avvist";
+  opprettet: string;
+}
+
+export async function listNyeAvtaler(): Promise<NyAvtale[]> {
+  const { data, error } = await supabase
+    .from("stromavtaler_inn")
+    .select("*")
+    .order("opprettet", { ascending: false });
+  // Tabellen finnes kanskje ikke ennå (migrasjonen ikke kjørt). Da er svaret
+  // «ingen nye avtaler», ikke en feilmelding som velter hele siden.
+  if (error) {
+    if (/does not exist|schema cache|PGRST205/i.test(error.message)) return [];
+    throw error;
+  }
+  return (data ?? []) as NyAvtale[];
+}
+
+export async function settNyAvtaleStatus(id: string, status: NyAvtale["status"]): Promise<void> {
+  const { error } = await supabase.from("stromavtaler_inn").update({ status }).eq("id", id);
+  if (error) throw error;
+}
