@@ -198,3 +198,14 @@ export async function settNyAvtaleStatus(id: string, status: NyAvtale["status"])
   const { error } = await supabase.from("stromavtaler_inn").update({ status }).eq("id", id);
   if (error) throw error;
 }
+
+// Fakturakontroll fyller ut det den vet - kunde, avtalenavn, beløp - men det
+// er ofte ufullstendig eller feilstavet før noen har sett nærmere på avtalen.
+// Denne lar en Strømflyt-bruker rette/supplere det manuelt før den klargjøres.
+export async function oppdaterNyAvtale(
+  id: string,
+  patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar">>,
+): Promise<void> {
+  const { error } = await supabase.from("stromavtaler_inn").update(patch).eq("id", id);
+  if (error) throw error;
+}

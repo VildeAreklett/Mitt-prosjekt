@@ -38,6 +38,7 @@ import {
   type HistoryEvent,
   listNyeAvtaler,
   settNyAvtaleStatus,
+  oppdaterNyAvtale,
   type NyAvtale,
 } from "../../lib/stromflyt-api";
 import type { ParsedAvtale } from "../../lib/avtale-parser";
@@ -141,6 +142,12 @@ export default function StromflytPage() {
   // Avtaler sendt hit fra fakturakontroll, som ennå ikke har målepunkter.
   const [nyeAvtaler, setNyeAvtaler] = useState<NyAvtale[]>([]);
   const [nyeJobber, setNyeJobber] = useState<string | null>(null);
+  // Hvilken "Nye avtaler"-rad en PDF akkurat nå er sluppet/lastet opp for -
+  // brukes til å koble den ferdige AI-lesingen tilbake til riktig rad, slik
+  // at raden kan settes til "Klargjort" automatisk når målepunktene er lagt
+  // inn, i stedet for at brukeren må huske å gjøre det som et eget steg.
+  const [nyAvtaleKobling, setNyAvtaleKobling] = useState<NyAvtale | null>(null);
+  const [nyAvtaleDrag, setNyAvtaleDrag] = useState<string | null>(null);
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -543,8 +550,9 @@ export default function StromflytPage() {
     }
   }
 
-  async function parsePdf(file: File | undefined) {
+  async function parsePdf(file: File | undefined, fraNyAvtale?: NyAvtale) {
     if (!file) return;
+    setNyAvtaleKobling(fraNyAvtale ?? null);
     setParsing(true);
     setParsed(null);
     setImportName(file.name);
@@ -957,9 +965,16 @@ export default function StromflytPage() {
       }
     }
     setImporting(false);
+    // Kom denne PDF-en fra en "Nye avtaler"-rad, er den nå faktisk klargjort -
+    // målepunktene finnes i registeret, ingen grunn til at noen må huske å
+    // gå tilbake og endre statusen manuelt som et eget steg.
+    if (ok && nyAvtaleKobling) {
+      try { await settNyAvtaleStatus(nyAvtaleKobling.id, "Klargjort"); } catch { /* raden kan settes manuelt om dette feiler */ }
+    }
     await refresh();
     if (ok) {
       setParsed(null);
+      setNyAvtaleKobling(null);
       setTab("reg");
       flash(`${ok} målepunkt lagt i registeret${failures.length ? `, ${failures.length} hoppet over` : ""}`);
     } else {
@@ -1591,7 +1606,8 @@ export default function StromflytPage() {
                 <h1>Nye avtaler</h1>
                 <span>
                   Signerte strømavtaler sendt hit fra fakturakontroll. De har ingen målepunkter
-                  ennå — registrer dem, og sett avtalen til «Klargjort» når den er på plass.
+                  ennå — rett opp detaljene ved behov, og dra avtale-PDF-en rett på raden for å
+                  lese ut målepunktene automatisk og klargjøre den.
                 </span>
               </div>
             </div>
@@ -1615,41 +1631,106 @@ export default function StromflytPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {nyeAvtaler.map((a) => (
-                      <tr key={a.id} style={a.status === "Klargjort" || a.status === "Avvist" ? { opacity: 0.55 } : undefined}>
-                        <td><span className={"pill " + (a.status === "Klargjort" ? "s-aktiv" : a.status === "Avvist" ? "s-kladd" : "s-innmeldt")}>{a.status}</span></td>
-                        <td style={{ whiteSpace: "normal", minWidth: 260 }}>
-                          <strong>{a.avtalenavn}</strong>
-                          {(a.kunde || a.at_nummer) && (
-                            <div className="muted" style={{ fontSize: 12 }}>
-                              {[a.kunde, a.at_nummer].filter(Boolean).join(" · ")}
+                    {nyeAvtaler.map((a) => {
+                      const ferdig = a.status === "Klargjort" || a.status === "Avvist";
+                      const lagreFelt = (patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar">>) =>
+                        void oppdaterNyAvtale(a.id, patch).then(refresh).catch((e) => flash("Kunne ikke lagre: " + (e.message ?? e)));
+                      const slippFil = (file: File | undefined) => {
+                        if (!file) return;
+                        setTab("import");
+                        void parsePdf(file, a);
+                      };
+                      return (
+                        <tr
+                          key={a.id}
+                          className={nyAvtaleDrag === a.id ? "ny-avtale-drag-over" : undefined}
+                          style={ferdig ? { opacity: 0.55 } : undefined}
+                          onDragOver={(e) => { if (ferdig) return; e.preventDefault(); setNyAvtaleDrag(a.id); }}
+                          onDragLeave={() => setNyAvtaleDrag((d) => (d === a.id ? null : d))}
+                          onDrop={(e) => {
+                            if (ferdig) return;
+                            e.preventDefault();
+                            setNyAvtaleDrag(null);
+                            slippFil(e.dataTransfer.files?.[0]);
+                          }}
+                        >
+                          <td><span className={"pill " + (a.status === "Klargjort" ? "s-aktiv" : a.status === "Avvist" ? "s-kladd" : "s-innmeldt")}>{a.status}</span></td>
+                          <td style={{ whiteSpace: "normal", minWidth: 300 }}>
+                            <div className="ny-avtale-edit">
+                              <input
+                                key={a.id + "-navn"}
+                                className="ny-avtale-navn"
+                                defaultValue={a.avtalenavn}
+                                disabled={ferdig}
+                                onBlur={(e) => { if (e.target.value !== a.avtalenavn) lagreFelt({ avtalenavn: e.target.value }); }}
+                              />
+                              <div className="ny-avtale-rad2">
+                                <input
+                                  key={a.id + "-kunde"}
+                                  placeholder="Kunde"
+                                  defaultValue={a.kunde}
+                                  disabled={ferdig}
+                                  onBlur={(e) => { if (e.target.value !== a.kunde) lagreFelt({ kunde: e.target.value }); }}
+                                />
+                                <input
+                                  key={a.id + "-at"}
+                                  placeholder="AT-nummer"
+                                  defaultValue={a.at_nummer}
+                                  disabled={ferdig}
+                                  onBlur={(e) => { if (e.target.value !== a.at_nummer) lagreFelt({ at_nummer: e.target.value }); }}
+                                />
+                              </div>
+                              <input
+                                key={a.id + "-kommentar"}
+                                placeholder="Kommentar"
+                                defaultValue={a.kommentar}
+                                disabled={ferdig}
+                                onBlur={(e) => { if (e.target.value !== a.kommentar) lagreFelt({ kommentar: e.target.value }); }}
+                              />
                             </div>
-                          )}
-                          {a.kommentar && <div className="muted" style={{ fontSize: 12 }}>{a.kommentar}</div>}
-                        </td>
-                        <td className="num">{a.signert_dato ?? "-"}</td>
-                        <td className="num">{a.belop != null ? Number(a.belop).toLocaleString("nb-NO") : "-"}</td>
-                        <td>
-                          {a.pandadoc_url
-                            ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne</a>
-                            : <span className="muted">-</span>}
-                        </td>
-                        <td style={{ whiteSpace: "nowrap" }}>
-                          {a.status !== "Klargjort" && (
-                            <button className="btn primary" disabled={nyeJobber === a.id}
-                              onClick={() => settNyStatus(a, "Klargjort")}>
-                              {nyeJobber === a.id ? "Lagrer ..." : "Klargjort"}
-                            </button>
-                          )}{" "}
-                          {a.status === "Ny" && (
-                            <button className="btn" disabled={nyeJobber === a.id}
-                              onClick={() => settNyStatus(a, "Under arbeid")}>
-                              Under arbeid
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="num">{a.signert_dato ?? "-"}</td>
+                          <td className="num">
+                            <input
+                              key={a.id + "-belop"}
+                              type="number"
+                              className="ny-avtale-belop"
+                              defaultValue={a.belop ?? ""}
+                              disabled={ferdig}
+                              onBlur={(e) => {
+                                const v = e.target.value === "" ? null : Number(e.target.value);
+                                if (v !== a.belop) lagreFelt({ belop: v });
+                              }}
+                            />
+                          </td>
+                          <td>
+                            {a.pandadoc_url
+                              ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne</a>
+                              : <span className="muted">-</span>}
+                          </td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {!ferdig && (
+                              <label className="upload-btn sm" title="Slipp avtale-PDF-en her, eller klikk for å velge fil - leser ut målepunktene automatisk">
+                                Last opp avtale
+                                <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
+                              </label>
+                            )}{" "}
+                            {a.status !== "Klargjort" && (
+                              <button className="btn" disabled={nyeJobber === a.id}
+                                onClick={() => settNyStatus(a, "Klargjort")}>
+                                {nyeJobber === a.id ? "Lagrer ..." : "Klargjort"}
+                              </button>
+                            )}{" "}
+                            {a.status === "Ny" && (
+                              <button className="btn" disabled={nyeJobber === a.id}
+                                onClick={() => settNyStatus(a, "Under arbeid")}>
+                                Under arbeid
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2542,6 +2623,18 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .drop-zone-icon{width:44px;height:44px;border-radius:999px;background:var(--sf-accent-soft);color:var(--sf-accent);display:grid;place-items:center;margin-bottom:6px}
 .drop-zone-or{color:var(--sf-ink-3);font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;margin:6px 0}
 .upload-btn{display:inline-flex;align-items:center;justify-content:center;background:var(--sf-accent);color:var(--sf-accent-ink);padding:10px 16px;border-radius:8px;font-weight:620;cursor:pointer;white-space:nowrap}.upload-btn input{position:absolute;opacity:0;pointer-events:none}.upload-btn:has(input:disabled){opacity:.55;cursor:not-allowed}
+.upload-btn.sm{padding:5px 10px;font-size:13px;border-radius:7px}
+.ny-avtale-edit{display:flex;flex-direction:column;gap:4px;padding:6px 0}
+.ny-avtale-edit input{font:inherit;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%}
+.ny-avtale-edit input:hover:not(:disabled){border-color:var(--sf-border)}
+.ny-avtale-edit input:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
+.ny-avtale-edit input:disabled{color:inherit;cursor:default}
+.ny-avtale-navn{font-weight:620}
+.ny-avtale-rad2{display:flex;gap:8px}
+.ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3)}
+.ny-avtale-edit>input[placeholder="Kommentar"]{font-size:12.5px;color:var(--sf-ink-3)}
+.ny-avtale-belop{text-align:right;width:90px}
+tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;background:var(--sf-accent-soft)}
 .import-summary{overflow:hidden}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sf-border);border-bottom:1px solid var(--sf-border)}
 .summary-item{background:var(--sf-surface);padding:14px 18px}.summary-item span{display:block;color:var(--sf-ink-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}.summary-item b{display:block;margin-top:3px;font-size:15px}
 .import-org{display:grid;grid-template-columns:220px minmax(260px,420px) 1fr;align-items:center;gap:12px;padding:16px 18px}.import-org label{font-size:13px;font-weight:620}.import-org span{font-size:12px;color:var(--sf-ink-3)}
