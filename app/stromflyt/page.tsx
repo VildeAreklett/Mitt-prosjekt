@@ -151,6 +151,7 @@ export default function StromflytPage() {
   const [tab, setTab] = useState<"reg" | "overview" | "form" | "import" | "excel" | "faktura" | "nye">("reg");
   // Avtaler sendt hit fra fakturakontroll, som ennå ikke har målepunkter.
   const [nyeAvtaler, setNyeAvtaler] = useState<NyAvtale[]>([]);
+  const [nyeFane, setNyeFane] = useState<"aktiv" | "ferdig">("aktiv");
   const [nyeJobber, setNyeJobber] = useState<string | null>(null);
   // Hvilken "Nye avtaler"-rad en PDF akkurat nå er sluppet/lastet opp for -
   // brukes til å koble den ferdige AI-lesingen tilbake til riktig rad, slik
@@ -1700,7 +1701,22 @@ export default function StromflytPage() {
                 signert og registrert i fakturakontrollen.
               </p>
             ) : (
-              <div className="panel" style={{ marginTop: 16, overflowX: "auto" }}>
+              <>
+                <div className="nye-faner">
+                  <button
+                    className={nyeFane === "aktiv" ? "active" : ""}
+                    onClick={() => setNyeFane("aktiv")}
+                  >
+                    Krever handling <span className="nye-faner-tall">{nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length}</span>
+                  </button>
+                  <button
+                    className={nyeFane === "ferdig" ? "active" : ""}
+                    onClick={() => setNyeFane("ferdig")}
+                  >
+                    Ferdig <span className="nye-faner-tall">{nyeAvtaler.filter((a) => a.status === "Klargjort" || a.status === "Avvist").length}</span>
+                  </button>
+                </div>
+                <div className="panel" style={{ overflowX: "auto" }}>
                 <table>
                   <thead>
                     <tr>
@@ -1713,7 +1729,7 @@ export default function StromflytPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {nyeAvtaler.map((a) => {
+                    {nyeAvtaler.filter((a) => (nyeFane === "aktiv") === (a.status === "Ny" || a.status === "Under arbeid")).map((a) => {
                       const ferdig = a.status === "Klargjort" || a.status === "Avvist";
                       const lagreFelt = (patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar">>) =>
                         void oppdaterNyAvtale(a.id, patch).then(refresh).catch((e) => flash("Kunne ikke lagre: " + (e.message ?? e)));
@@ -1815,7 +1831,8 @@ export default function StromflytPage() {
                     })}
                   </tbody>
                 </table>
-              </div>
+                </div>
+              </>
             )}
           </section>
         )}
@@ -2784,6 +2801,11 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .overview-2col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch}
 .volum-chart .hd{align-items:flex-start;justify-content:space-between}.volum-chart .hd select{margin-left:12px}
 .volum-chart-valg{display:flex;align-items:center;gap:10px}
+.nye-faner{display:flex;gap:4px;border-bottom:1px solid var(--sf-border);margin-bottom:16px}
+.nye-faner button{font:inherit;font-size:14px;font-weight:600;padding:9px 4px 11px;margin-right:20px;border:0;border-bottom:2px solid transparent;background:none;color:var(--sf-ink-3);cursor:pointer}
+.nye-faner button.active{color:var(--sf-ink);border-bottom-color:var(--sf-accent)}
+.nye-faner-tall{display:inline-block;margin-left:4px;font-size:12px;font-weight:700;background:var(--sf-surface-2);color:var(--sf-ink-2);border-radius:999px;padding:1px 8px}
+.nye-faner button.active .nye-faner-tall{background:var(--sf-accent-soft);color:var(--sf-accent)}
 .seg-toggle{display:flex;border:1px solid var(--sf-border-strong);border-radius:8px;overflow:hidden}
 .seg-toggle button{font:inherit;font-size:12.5px;font-weight:560;padding:6px 10px;border:0;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}
 .seg-toggle button+button{border-left:1px solid var(--sf-border-strong)}
