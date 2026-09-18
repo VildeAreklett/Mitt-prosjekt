@@ -1800,7 +1800,7 @@ export default function StromflytPage() {
                   <tbody>
                     {nyeAvtaler.filter((a) => (nyeFane === "aktiv") === (a.status === "Ny" || a.status === "Under arbeid")).map((a) => {
                       const ferdig = a.status === "Klargjort" || a.status === "Avvist";
-                      const lagreFelt = (patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar">>) =>
+                      const lagreFelt = (patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar" | "pandadoc_url" | "signert_dato">>) =>
                         void oppdaterNyAvtale(a.id, patch).then(refresh).catch((e) => flash("Kunne ikke lagre: " + (e.message ?? e)));
                       const slippFil = (file: File | undefined) => {
                         if (!file) return;
@@ -1856,8 +1856,18 @@ export default function StromflytPage() {
                               />
                             </div>
                           </td>
-                          <td className="num">{relativDato(a.signert_dato)}</td>
                           <td className="num">
+                            <input
+                              key={a.id + "-signert"}
+                              type="date"
+                              className="ny-avtale-dato"
+                              defaultValue={a.signert_dato ?? ""}
+                              disabled={ferdig}
+                              title={a.signert_dato ? relativDato(a.signert_dato) : "Ikke satt"}
+                              onBlur={(e) => { if (e.target.value !== (a.signert_dato ?? "")) lagreFelt({ signert_dato: e.target.value || null }); }}
+                            />
+                          </td>
+                          <td className="num" style={{ textAlign: "right" }}>
                             <input
                               key={a.id + "-belop"}
                               type="number"
@@ -1870,17 +1880,27 @@ export default function StromflytPage() {
                               }}
                             />
                           </td>
-                          <td>
-                            {a.pandadoc_url
-                              ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne i PandaDoc ⧉</a>
-                              : <span className="muted">-</span>}
+                          <td style={{ minWidth: 180 }}>
+                            <input
+                              key={a.id + "-pandadoc"}
+                              className="ny-avtale-lenke"
+                              placeholder="Lim inn PandaDoc-lenke"
+                              defaultValue={a.pandadoc_url}
+                              disabled={ferdig}
+                              onBlur={(e) => { if (e.target.value !== a.pandadoc_url) lagreFelt({ pandadoc_url: e.target.value.trim() }); }}
+                            />
                           </td>
                           <td style={{ whiteSpace: "nowrap" }}>
                             <div className="ny-avtale-knapper">
+                              {a.pandadoc_url && (
+                                <a className="btn primary sm" href={a.pandadoc_url} target="_blank" rel="noreferrer">
+                                  Åpne avtale
+                                </a>
+                              )}
                               {!ferdig && (
-                                <label className="btn primary sm ny-avtale-hent" title="Dra avtale-PDF-en hit, eller klikk for å velge fil - leser ut målepunktene automatisk">
+                                <label className={"btn sm ny-avtale-hent" + (a.pandadoc_url ? "" : " primary")} title="Dra avtale-PDF-en hit, eller klikk for å velge fil - leser ut målepunktene automatisk">
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 18v-6m0 0-2.5 2.5M12 12l2.5 2.5" /></svg>
-                                  Bekreft og hent
+                                  {a.pandadoc_url ? "Last opp avtale" : "Bekreft og hent"}
                                   <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
                                 </label>
                               )}
@@ -2866,7 +2886,13 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .ny-avtale-rad2{display:flex;gap:8px}
 .ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3)}
 .ny-avtale-edit>input[placeholder="Kommentar"]{font-size:12.5px;color:var(--sf-ink-3)}
-.ny-avtale-belop{text-align:right;width:90px}
+.ny-avtale-belop{text-align:right;width:100%}
+.sf-root .ny-avtale-dato{font:inherit;font-family:var(--sf-mono);border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%;color-scheme:light}
+.sf-root .ny-avtale-dato:hover:not(:disabled){border-color:var(--sf-border)}
+.sf-root .ny-avtale-dato:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
+.sf-root .ny-avtale-lenke{font:inherit;font-size:12.5px;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%;color:var(--sf-ink-2)}
+.sf-root .ny-avtale-lenke:hover:not(:disabled){border-color:var(--sf-border)}
+.sf-root .ny-avtale-lenke:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none;color:var(--sf-ink)}
 tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;background:var(--sf-accent-soft)}
 .import-summary{overflow:hidden}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--sf-border);border-bottom:1px solid var(--sf-border)}
 .summary-item{background:var(--sf-surface);padding:14px 18px}.summary-item span{display:block;color:var(--sf-ink-3);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}.summary-item b{display:block;margin-top:3px;font-size:15px}

@@ -204,7 +204,7 @@ export async function settNyAvtaleStatus(id: string, status: NyAvtale["status"])
 // Denne lar en Strømflyt-bruker rette/supplere det manuelt før den klargjøres.
 export async function oppdaterNyAvtale(
   id: string,
-  patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar">>,
+  patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar" | "pandadoc_url" | "signert_dato">>,
 ): Promise<void> {
   const { error } = await supabase.from("stromavtaler_inn").update(patch).eq("id", id);
   if (error) throw error;
