@@ -152,6 +152,10 @@ export default function StromflytPage() {
   // Avtaler sendt hit fra fakturakontroll, som ennå ikke har målepunkter.
   const [nyeAvtaler, setNyeAvtaler] = useState<NyAvtale[]>([]);
   const [nyeFane, setNyeFane] = useState<"aktiv" | "ferdig">("aktiv");
+  // Til "Oppdatert HH:MM" i Oversikt-headeren - når dataene sist faktisk ble
+  // hentet, ikke når siden ble lastet (kan være ulikt om noen lar fanen stå
+  // åpen lenge).
+  const [sistOppdatert, setSistOppdatert] = useState<Date | null>(null);
   const [nyeJobber, setNyeJobber] = useState<string | null>(null);
   // Hvilken "Nye avtaler"-rad en PDF akkurat nå er sluppet/lastet opp for -
   // brukes til å koble den ferdige AI-lesingen tilbake til riktig rad, slik
@@ -312,6 +316,7 @@ export default function StromflytPage() {
       // migrasjonen ikke er kjørt — skal ikke resten av siden ryke med.
       try { setNyeAvtaler(await listNyeAvtaler()); } catch { setNyeAvtaler([]); }
       setErr(null);
+      setSistOppdatert(new Date());
     }
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setLoading(false); }
@@ -514,13 +519,23 @@ export default function StromflytPage() {
     const ikkeMeldtInn = rows.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling");
     const venterPaEntelios = rows.filter((r) => r.status === "Sendt Entelios");
     const cloudOppsett = rows.filter((r) => r.status === "Satt opp i Cloud");
+    const venterDager = venterPaEntelios.map((r) => dagerSiden(r.updated_at) ?? 0);
+    // "Mangler Cloud-kobling" - bekreftet av Entelios eller satt opp i Cloud,
+    // men ingen tsdb_id lagret ennå. Dette er nettopp de radene "Sjekk i
+    // Cloud" faktisk kan gjøre noe med - ikke en egen statuslinje-fase, men
+    // et konkret, handlingsrettet utvalg på tvers av to av dem.
+    const manglerCloudKobling = rows.filter(
+      (r) => (r.status === "Bekreftet" || r.status === "Satt opp i Cloud") && !r.tsdb_id
+    );
     return {
       ikkeMeldtInn: { total: ikkeMeldtInn.length, rader: ikkeMeldtInn.slice(0, 2) },
       venterPaEntelios: {
         total: venterPaEntelios.length,
+        eldsteDager: venterDager.length ? Math.max(...venterDager) : 0,
         rader: venterPaEntelios.slice(0, 2).map((r) => ({ rad: r, dager: dagerSiden(r.updated_at) })),
       },
       cloudOppsett: { total: cloudOppsett.length, rader: cloudOppsett.slice(0, 2) },
+      manglerCloudKobling: { total: manglerCloudKobling.length, rader: manglerCloudKobling.slice(0, 2) },
     };
   }, [rows]);
 
@@ -1840,8 +1855,11 @@ export default function StromflytPage() {
         {tab === "overview" && (
           <section className="overview-page">
             <div className="page-heading">
-              <div><h1>Oversikt</h1><span>Status for alle registrerte målepunkt</span></div>
-              <button className="btn" onClick={refresh}>Oppdater oversikt</button>
+              <div><h1>Driftsbildet</h1><span>Det som trenger oppmerksomhet først.</span></div>
+              <div className="page-heading-hoyre">
+                {sistOppdatert && <span className="sist-oppdatert">Oppdatert {sistOppdatert.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" })}</span>}
+                <button className="btn" onClick={refresh}>Oppdater oversikt</button>
+              </div>
             </div>
 
             <div className="tiles">
@@ -1876,17 +1894,20 @@ export default function StromflytPage() {
             <div className="overview-2col">
               <div className="panel livslop">
                 <div className="hd">
-                  <div><h2>Livsløp</h2><span className="sub">statusfordeling over {STAGES.length} trinn</span></div>
-                  <span className="sub">Kladd → Aktiv</span>
+                  <div><h2>Livsløp</h2><span className="sub">Fordeling på hvert steg</span></div>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="livslop-puls" aria-hidden="true"><path d="M3 12h4l2-7 4 14 3-9 2 4h3" /></svg>
                 </div>
-                <div className="livslop-rows">
+                <div className="livslop-soyler">
                   {livslop.map((s, i) => (
-                    <div className="livslop-row" key={s.status}>
-                      <span className="livslop-label">{displayStatus(s.status)}</span>
-                      <div className="livslop-track">
-                        <span className="livslop-fill" style={{ width: `${(s.antall / s.maks) * 100}%`, opacity: 0.35 + (i / (STAGES.length - 1)) * 0.65 }} />
+                    <div className="livslop-soyle-col" key={s.status}>
+                      <span className="livslop-soyle-val">{s.antall}</span>
+                      <div className="livslop-soyle-track">
+                        <div
+                          className={"livslop-soyle" + (i === STAGES.length - 1 ? " naa" : "")}
+                          style={{ height: `${(s.antall / s.maks) * 100}%` }}
+                        />
                       </div>
-                      <span className="livslop-antall">{s.antall}</span>
+                      <span className="livslop-soyle-label">{displayStatus(s.status)}</span>
                     </div>
                   ))}
                 </div>
@@ -1955,45 +1976,47 @@ export default function StromflytPage() {
               </div>
             </div>
 
-            <div className="overview-section-heading">
-              <div><h2>Prioriterte køer</h2><span>De køene som trenger en handling nå</span></div>
-              <button className="link-btn" onClick={() => { setTab("reg"); setWorkFilter(""); }}>Åpne arbeidsliste →</button>
-            </div>
-            <div className="priokoer">
-              <div className="priokort">
-                <div className="priokort-hd"><span className="dot varsel" />Klar til innmelding<b>{prioriterteKoer.ikkeMeldtInn.total}</b></div>
-                {prioriterteKoer.ikkeMeldtInn.rader.map((r) => (
-                  <div className="priorad" key={r.id}>
-                    <div><b>{r.kunde || "Uten kunde"}</b><span>MPID {r.maalepunkt_id || "ikke satt"}</span></div>
-                    <button className="btn sm" onClick={() => startEdit(r)}>Fyll ut</button>
-                  </div>
-                ))}
-                {prioriterteKoer.ikkeMeldtInn.total > 2 && (
-                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("handling"); }}>+{prioriterteKoer.ikkeMeldtInn.total - 2} til · alle i køen</button>
+            <div className="panel neste-handling">
+              <div className="hd"><h2>Neste handling</h2><span className="sub">Prioritert etter alder og blokkering</span></div>
+              <div className="neste-handling-rader">
+                {prioriterteKoer.ikkeMeldtInn.total > 0 && (
+                  <button className="neste-rad" onClick={() => { setTab("nye"); setNyeFane("aktiv"); }}>
+                    <span className="neste-ikon" aria-hidden="true">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                    </span>
+                    <span className="neste-tekst">
+                      <b>{nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length || prioriterteKoer.ikkeMeldtInn.total} nye avtaler</b>
+                      <span>Bekreft og hent anleggsdata</span>
+                    </span>
+                    <span className="neste-pil">→</span>
+                  </button>
                 )}
-              </div>
-              <div className="priokort">
-                <div className="priokort-hd"><span className="dot venter" />Venter på Entelios<b>{prioriterteKoer.venterPaEntelios.total}</b></div>
-                {prioriterteKoer.venterPaEntelios.rader.map(({ rad: r, dager }) => (
-                  <div className="priorad" key={r.id}>
-                    <div><b>{r.kunde || "Uten kunde"}</b><span>{dager !== null ? `Sendt for ${dager} dag${dager === 1 ? "" : "er"} siden` : "Sendt"}</span></div>
-                    <button className="btn sm" onClick={() => startEdit(r)}>Følg opp</button>
-                  </div>
-                ))}
-                {prioriterteKoer.venterPaEntelios.total > 2 && (
-                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("venter"); }}>+{prioriterteKoer.venterPaEntelios.total - 2} til · alle i køen</button>
+                {prioriterteKoer.venterPaEntelios.total > 0 && (
+                  <button className="neste-rad" onClick={() => { setTab("reg"); setWorkFilter("venter"); setFltStatus(""); }}>
+                    <span className="neste-ikon" aria-hidden="true">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
+                    </span>
+                    <span className="neste-tekst">
+                      <b>{prioriterteKoer.venterPaEntelios.total} venter på Entelios</b>
+                      <span>Eldste har ventet i {prioriterteKoer.venterPaEntelios.eldsteDager} dag{prioriterteKoer.venterPaEntelios.eldsteDager === 1 ? "" : "er"}</span>
+                    </span>
+                    <span className="neste-pil">→</span>
+                  </button>
                 )}
-              </div>
-              <div className="priokort">
-                <div className="priokort-hd"><span className="dot cloud" />Cloud-oppsett<b>{prioriterteKoer.cloudOppsett.total}</b></div>
-                {prioriterteKoer.cloudOppsett.rader.map((r) => (
-                  <div className="priorad" key={r.id}>
-                    <div><b>{r.kunde || "Uten kunde"}</b><span>{r.tsdb_id ? "tsdb_id satt" : "tsdb_id mangler"}</span></div>
-                    <button className="btn sm" onClick={() => sjekkICloud(r)}>Sjekk Cloud</button>
-                  </div>
-                ))}
-                {prioriterteKoer.cloudOppsett.total > 2 && (
-                  <button className="priokort-mer" onClick={() => { setTab("reg"); setWorkFilter("cloud"); }}>+{prioriterteKoer.cloudOppsett.total - 2} til · alle i køen</button>
+                {prioriterteKoer.manglerCloudKobling.total > 0 && (
+                  <button className="neste-rad" onClick={() => { setTab("reg"); setWorkFilter("revisjon"); setFltStatus(""); }}>
+                    <span className="neste-ikon" aria-hidden="true">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10Z" /></svg>
+                    </span>
+                    <span className="neste-tekst">
+                      <b>{prioriterteKoer.manglerCloudKobling.total} mangler Cloud-kobling</b>
+                      <span>Kjør oppslag mot Adaptic Cloud</span>
+                    </span>
+                    <span className="neste-pil">→</span>
+                  </button>
+                )}
+                {prioriterteKoer.ikkeMeldtInn.total === 0 && prioriterteKoer.venterPaEntelios.total === 0 && prioriterteKoer.manglerCloudKobling.total === 0 && (
+                  <p className="muted" style={{ padding: "12px 4px" }}>Ingenting trenger oppmerksomhet akkurat nå.</p>
                 )}
               </div>
             </div>
@@ -2761,6 +2784,8 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .banner{background:var(--sf-crit-soft);color:var(--sf-crit);border:1px solid var(--sf-crit);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:14px}
 .import-page{width:100%;max-width:none}
 .page-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.page-heading h1{font-size:24px;letter-spacing:-.02em}.page-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
+.page-heading-hoyre{display:flex;align-items:center;gap:12px}
+.sist-oppdatert{color:var(--sf-ink-3);font-size:12.5px;white-space:nowrap}
 .overview-section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin:4px 0 12px}.overview-section-heading h2{font-size:16px}.overview-section-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
 .link-btn{font:inherit;background:none;border:0;color:var(--sf-accent);font-weight:610;cursor:pointer;padding:2px}.link-btn:hover{text-decoration:underline}
 .overview-queues{display:grid;grid-template-columns:repeat(5,minmax(170px,1fr));gap:12px}.overview-queues button{font:inherit;text-align:left;display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:16px;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);color:var(--sf-ink-2);cursor:pointer}.overview-queues button:hover{border-color:var(--sf-accent);box-shadow:0 4px 18px rgba(26,34,48,.06)}.overview-queues button span{font-weight:580}.overview-queues button b{grid-row:1/3;grid-column:2;font-size:24px;color:var(--sf-ink)}.overview-queues button small{font-size:12px;color:var(--sf-accent)}
@@ -2817,26 +2842,28 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .volum-bar.naa{background:var(--sf-accent)}
 .volum-bar-val{font-size:11px;color:var(--sf-ink-3);margin-top:6px;height:14px}
 .volum-bar-label{font-size:12px;color:var(--sf-ink-2);margin-top:2px}
-.livslop-rows{padding:14px 18px 18px;display:flex;flex-direction:column;gap:10px}
-.livslop-row{display:grid;grid-template-columns:130px 1fr 26px;align-items:center;gap:10px}
-.livslop-label{font-size:13px;color:var(--sf-ink-2)}
-.livslop-track{height:8px;border-radius:999px;background:var(--sf-surface-2);overflow:hidden}
-.livslop-fill{display:block;height:100%;background:var(--sf-accent);border-radius:999px;min-width:2px;transition:width .2s}
-.livslop-antall{font-size:13px;font-weight:620;text-align:right}
+.livslop .hd h2{display:flex;align-items:center;gap:8px}
+.livslop-puls{color:var(--sf-accent)}
+.livslop-soyler{display:flex;align-items:flex-end;gap:10px;padding:22px 18px 16px;height:190px}
+.livslop-soyle-col{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
+.livslop-soyle-val{font-size:13px;font-weight:700;margin-bottom:6px}
+.livslop-soyle-track{flex:1;display:flex;align-items:flex-end;width:100%;max-width:44px}
+.livslop-soyle{width:100%;background:var(--sf-accent-soft);border-radius:5px 5px 0 0;min-height:3px;transition:height .2s}
+.livslop-soyle.naa{background:var(--sf-accent)}
+.livslop-soyle-label{font-size:11.5px;color:var(--sf-ink-3);margin-top:8px;text-align:center;line-height:1.25}
 .livslop-revisjon{font:inherit;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--sf-border);color:var(--sf-ink-2);font-size:12.5px;padding:11px 18px;cursor:pointer}
 .livslop-revisjon:hover{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .livslop-revisjon b{color:var(--sf-ink);font-weight:700}
-.priokoer{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
-.priokort{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;padding:14px 16px}
-.priokort-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:620;color:var(--sf-ink-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.02em}
-.priokort-hd b{margin-left:auto;font-size:15px;color:var(--sf-ink);font-weight:700}
-.priokort-hd .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.priokort-hd .dot.varsel{background:var(--sf-warn)}.priokort-hd .dot.venter{background:var(--sf-accent)}.priokort-hd .dot.cloud{background:#7c6fe0}
-.priorad{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-top:1px solid var(--sf-border)}
-.priorad:first-of-type{border-top:0}
-.priorad div{min-width:0}
-.priorad b{display:block;font-size:13.5px;font-weight:610;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.priorad span{display:block;font-size:12px;color:var(--sf-ink-3);margin-top:1px}
+.neste-handling{margin-bottom:20px}
+.neste-handling-rader{display:flex;flex-direction:column}
+.neste-rad{font:inherit;display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--sf-border);padding:14px 18px;cursor:pointer}
+.neste-rad:first-child{border-top:0}
+.neste-rad:hover{background:var(--sf-surface-2)}
+.neste-ikon{flex-shrink:0;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--sf-accent-soft);color:var(--sf-accent)}
+.neste-tekst{flex:1;min-width:0;display:flex;flex-direction:column}
+.neste-tekst b{font-size:14px;font-weight:650;color:var(--sf-ink)}
+.neste-tekst span{font-size:12.5px;color:var(--sf-ink-3);margin-top:1px}
+.neste-pil{color:var(--sf-ink-3);font-size:16px}
 .priokort-mer{font:inherit;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--sf-border);color:var(--sf-ink-3);font-size:12.5px;padding:9px 0 0;margin-top:2px;cursor:pointer}
 .priokort-mer:hover{color:var(--sf-accent)}
 .panel{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;margin-bottom:20px}
