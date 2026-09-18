@@ -2763,20 +2763,20 @@ const CSS = `
 .topbar .profile-trigger:hover,.topbar .profile-trigger[aria-expanded=true]{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.3)}
 .topbar .profile-chevron{color:#93a5ba}
 .app-body{display:grid;grid-template-columns:240px minmax(0,1fr);align-items:start}
-.sidenav{position:sticky;top:64px;align-self:start;min-height:calc(100vh - 64px);background:var(--sf-surface);border-right:1px solid var(--sf-border);padding:16px 12px 24px;display:flex;flex-direction:column;gap:2px}
-.sidenav-merke{color:var(--sf-ink-3);font-size:10.5px;font-weight:700;letter-spacing:.09em;padding:10px 10px 6px}
-.sidenav button{font:inherit;border:1px solid transparent;background:transparent;color:var(--sf-ink-2);height:38px;padding:0 10px;justify-content:flex-start;display:flex;align-items:center;gap:8px;width:100%;font-weight:550;border-radius:8px;cursor:pointer}
+.sidenav{position:sticky;top:64px;align-self:start;min-height:calc(100vh - 64px);background:var(--sf-navy);border-right:1px solid rgba(255,255,255,.08);padding:16px 12px 24px;display:flex;flex-direction:column;gap:2px}
+.sidenav-merke{color:#93a5ba;font-size:10.5px;font-weight:700;letter-spacing:.09em;padding:10px 10px 6px}
+.sidenav button{font:inherit;border:1px solid transparent;background:transparent;color:#cdd7e2;height:38px;padding:0 10px;justify-content:flex-start;display:flex;align-items:center;gap:8px;width:100%;font-weight:550;border-radius:8px;cursor:pointer}
 /* Fast høyde (38px) på knappene betyr at en lang etikett som brekker over to
    linjer flyter utenfor knappen og ser ut som et underpunkt av raden over -
    sett i praksis med "Bekreftet · klar for Cloud". Ett-linjes tekst med
    avkorting løser det uansett hvor lang etiketten senere blir. */
 .sidenav button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.sidenav button:hover{background:var(--sf-surface-2)}
+.sidenav button:hover{background:rgba(255,255,255,.08);color:#fff}
 .sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
-.sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:var(--sf-surface-2);color:var(--sf-ink-2);border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
+.sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe4ec;border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
 .sidenav button.active .sidenav-tall{background:var(--sf-accent);color:var(--sf-accent-ink)}
 .sidenav-tall.varsel{background:var(--sf-warn-soft);color:var(--sf-warn)}
-.sidenav-fot{margin-top:auto;color:var(--sf-ink-3);font-size:11.5px;line-height:1.45;padding:14px 10px 0;border-top:1px solid var(--sf-border)}
+.sidenav-fot{margin-top:auto;color:#93a5ba;font-size:11.5px;line-height:1.45;padding:14px 10px 0;border-top:1px solid rgba(255,255,255,.1)}
 .content-shell{width:100%;min-width:0;padding:26px 28px 80px}
 .profile-menu-wrap{position:relative}.profile-trigger{font:inherit;display:flex;align-items:center;gap:8px;padding:4px 9px 4px 5px;border:1px solid var(--sf-border-strong);border-radius:9px;background:var(--sf-surface);color:var(--sf-ink);font-size:13px;font-weight:570;cursor:pointer}.profile-trigger:hover,.profile-trigger[aria-expanded=true]{border-color:var(--sf-accent);background:var(--sf-accent-soft)}.profile-avatar{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--sf-accent);color:var(--sf-accent-ink);font-size:12px;font-weight:700}.profile-chevron{color:var(--sf-ink-3);font-size:14px}.profile-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:240px;padding:7px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:11px;box-shadow:0 14px 40px rgba(15,25,45,.14)}.profile-identity{padding:9px 10px 12px;border-bottom:1px solid var(--sf-border);margin-bottom:5px}.profile-identity span,.profile-identity small{display:block;color:var(--sf-ink-3);font-size:11.5px}.profile-identity b{display:block;margin:2px 0 1px;font-size:14px}.profile-menu>button{font:inherit;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:var(--sf-ink);text-align:left;font-size:13px;cursor:pointer}.profile-menu>button:hover{background:var(--sf-surface-2)}.profile-menu>button.profile-logout{color:var(--sf-crit)}
 main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
@@ -2938,7 +2938,7 @@ td .muted{color:var(--sf-ink-3)}
 @media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}.brand-panel p{display:none}.topbar{grid-template-columns:auto minmax(0,1fr) auto}}
 @media (max-width:900px){
   .app-body{grid-template-columns:1fr}
-  .sidenav{position:static;min-height:auto;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid var(--sf-border);padding:10px 12px}
+  .sidenav{position:static;min-height:auto;flex-direction:row;overflow-x:auto;border-right:none;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 12px}
   .sidenav-merke,.sidenav-fot{display:none}
   .sidenav button{width:auto;white-space:nowrap}
 }
