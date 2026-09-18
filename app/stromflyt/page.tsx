@@ -91,12 +91,12 @@ const displayNameFromEmail = (email: string | null) => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 };
 
-type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
+type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "revisjon";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
 
-const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
+const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult?: boolean }[] = [
   { key: "", label: "Alle", statuses: [] },
   // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
   // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
@@ -106,6 +106,16 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[] }[] = [
   { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
+  // Ikke en arbeidskø (den trenger ingen handling - "Satt opp i Cloud" og
+  // "Aktiv" har egne køer over for det som faktisk gjenstår) - dette er en
+  // revisjonsliste: ALT som noensinne er bekreftet av Entelios, uansett hvor
+  // langt det har kommet videre i Cloud-oppsettet. Skjult fra sidemenyen
+  // (skjult: true), bare nåbar via "Bekreftet av Entelios totalt"-panelet på
+  // Oversikt - se diskusjon om Elgsetergate 16 (sept. 2026): de to radene
+  // der IKKE dukket opp i "Registrert hos Entelios" fordi de allerede hadde
+  // rukket videre til "Satt opp i Cloud", noe som så ut som de manglet fra
+  // registreringen selv om de faktisk var bekreftet for lengst.
+  { key: "revisjon", label: "Bekreftet av Entelios (alle)", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"], skjult: true },
 ];
 
 // Kolonner i arbeidslisten som kan skrus av/på - Kunde og Handling vises alltid,
@@ -479,6 +489,17 @@ export default function StromflytPage() {
   const livslop = useMemo(() => {
     const maks = Math.max(1, ...STAGES.map((s) => rows.filter((r) => r.status === s).length));
     return STAGES.map((s) => ({ status: s, antall: rows.filter((r) => r.status === s).length, maks }));
+  }, [rows]);
+
+  // Revisjonstall - IKKE en arbeidskø (statuslinjens køer viser bevisst kun
+  // "hva trenger jeg å gjøre nå", ett steg av gangen), men et svar på "er
+  // absolutt alt faktisk bekreftet av Entelios, uansett hvor langt det har
+  // kommet videre i Cloud-oppsettet etterpå". Uten dette tallet så det ut
+  // som Elgsetergate 16 (Satt opp i Cloud) manglet fra registreringen, når
+  // den i realiteten bare hadde rukket videre.
+  const bekreftetTotalt = useMemo(() => {
+    const antall = rows.filter((r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Bekreftet")).length;
+    return { antall, avTotalt: rows.length };
   }, [rows]);
 
   // Prioriterte køer på Oversikt - de tre køene som faktisk trenger en
@@ -1631,7 +1652,7 @@ export default function StromflytPage() {
                 </span>
               )}
             </button>
-            {WORK_FILTERS.filter((f) => f.key).map((f) => {
+            {WORK_FILTERS.filter((f) => f.key && !f.skjult).map((f) => {
               const count = rows.filter((r) => f.statuses.includes(r.status)).length;
               const active = tab === "reg" && workFilter === f.key;
               return (
@@ -1852,6 +1873,13 @@ export default function StromflytPage() {
                     </div>
                   ))}
                 </div>
+                <button
+                  className="livslop-revisjon"
+                  onClick={() => { setTab("reg"); setWorkFilter("revisjon"); setFltStatus(""); }}
+                  title="Ikke en arbeidskø - viser ALT som er bekreftet av Entelios, uansett om det har kommet videre til Cloud-oppsett eller er aktivt i drift"
+                >
+                  Bekreftet av Entelios totalt: <b>{bekreftetTotalt.antall}</b> av {bekreftetTotalt.avTotalt} →
+                </button>
               </div>
 
               <div className="panel volum-chart">
@@ -2773,6 +2801,9 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .livslop-track{height:8px;border-radius:999px;background:var(--sf-surface-2);overflow:hidden}
 .livslop-fill{display:block;height:100%;background:var(--sf-accent);border-radius:999px;min-width:2px;transition:width .2s}
 .livslop-antall{font-size:13px;font-weight:620;text-align:right}
+.livslop-revisjon{font:inherit;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--sf-border);color:var(--sf-ink-2);font-size:12.5px;padding:11px 18px;cursor:pointer}
+.livslop-revisjon:hover{color:var(--sf-accent);background:var(--sf-accent-soft)}
+.livslop-revisjon b{color:var(--sf-ink);font-weight:700}
 .priokoer{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
 .priokort{background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;padding:14px 16px}
 .priokort-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:620;color:var(--sf-ink-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.02em}
