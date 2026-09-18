@@ -85,6 +85,24 @@ const displayStatus = (s: string) => {
   return s;
 };
 
+// "I dag" / "I går" / "14. sep." - mer lesbart enn en rå ISO-dato i en
+// tabell man skanner raskt gjennom. signert_dato er en ren dato (ingen
+// klokkeslett lagret), så viser bevisst ikke et oppdiktet klokkeslett -
+// det ville sett ut som ekte informasjon når det bare ville vært 00:00.
+const relativDato = (iso: string | null) => {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const naa = new Date();
+  const dagerMs = 24 * 60 * 60 * 1000;
+  const dToDag = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const naaToDag = new Date(naa.getFullYear(), naa.getMonth(), naa.getDate()).getTime();
+  const diff = Math.round((naaToDag - dToDag) / dagerMs);
+  if (diff === 0) return "I dag";
+  if (diff === 1) return "I går";
+  return d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" });
+};
+
 const displayNameFromEmail = (email: string | null) => {
   if (!email) return "Profil";
   return email.split("@")[0].split(/[._-]+/).filter(Boolean)
@@ -1514,6 +1532,36 @@ export default function StromflytPage() {
     flash(`${eksportRader.length} rader lastet ned`);
   }
 
+  async function eksporterNyeAvtaler() {
+    if (!nyeAvtaler.length) { flash("Ingen nye avtaler å eksportere"); return; }
+    const columns: { label: string; value: (a: NyAvtale) => string | number }[] = [
+      { label: "Status", value: (a) => a.status },
+      { label: "Avtale", value: (a) => a.avtalenavn },
+      { label: "Kunde", value: (a) => a.kunde },
+      { label: "AT-nummer", value: (a) => a.at_nummer },
+      { label: "Signert", value: (a) => a.signert_dato ?? "" },
+      { label: "Beløp", value: (a) => a.belop ?? "" },
+      { label: "PandaDoc", value: (a) => a.pandadoc_url },
+      { label: "Kommentar", value: (a) => a.kommentar },
+      { label: "Opprettet", value: (a) => a.opprettet },
+    ];
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Nye avtaler");
+    ws.addRow(columns.map((c) => c.label));
+    nyeAvtaler.forEach((a) => ws.addRow(columns.map((c) => c.value(a))));
+    ws.getRow(1).font = { bold: true };
+    ws.columns.forEach((col) => { col.width = 22; });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `stromflyt-nye-avtaler-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    flash(`${nyeAvtaler.length} avtaler lastet ned`);
+  }
+
   const errFor = (name: string) => ((showAll || touched[name]) && errors[name]) || "";
   const allVisibleSelected = filtered.length > 0 && filtered.every((r) => selectedIds.includes(r.id));
 
@@ -1699,15 +1747,21 @@ export default function StromflytPage() {
 
         {tab === "nye" && (
           <section>
+            {nyeAvtaler.some((a) => a.status === "Ny" || a.status === "Under arbeid") && (
+              <div className="venter-varsel">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
+                {nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length} venter på handling
+              </div>
+            )}
             <div className="worklist-heading">
               <div>
-                <h1>Nye avtaler</h1>
-                <span>
-                  Signerte strømavtaler sendt hit fra fakturakontroll. De har ingen målepunkter
-                  ennå — rett opp detaljene ved behov, og dra avtale-PDF-en rett på raden for å
-                  lese ut målepunktene automatisk og klargjøre den.
-                </span>
+                <h1>Signerte avtaler</h1>
+                <span>Bekreft avtalen, hent anleggsdata og opprett målepunktutkast.</span>
               </div>
+              <button className="btn" onClick={() => void eksporterNyeAvtaler()}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: -2 }}><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
+                Eksporter
+              </button>
             </div>
 
             {nyeAvtaler.length === 0 ? (
@@ -1802,7 +1856,7 @@ export default function StromflytPage() {
                               />
                             </div>
                           </td>
-                          <td className="num">{a.signert_dato ?? "-"}</td>
+                          <td className="num">{relativDato(a.signert_dato)}</td>
                           <td className="num">
                             <input
                               key={a.id + "-belop"}
@@ -1818,28 +1872,31 @@ export default function StromflytPage() {
                           </td>
                           <td>
                             {a.pandadoc_url
-                              ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne</a>
+                              ? <a href={a.pandadoc_url} target="_blank" rel="noreferrer">Åpne i PandaDoc ⧉</a>
                               : <span className="muted">-</span>}
                           </td>
                           <td style={{ whiteSpace: "nowrap" }}>
-                            {!ferdig && (
-                              <label className="upload-btn sm" title="Slipp avtale-PDF-en her, eller klikk for å velge fil - leser ut målepunktene automatisk">
-                                Last opp avtale
-                                <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
-                              </label>
-                            )}{" "}
-                            {a.status !== "Klargjort" && (
-                              <button className="btn" disabled={nyeJobber === a.id}
-                                onClick={() => settNyStatus(a, "Klargjort")}>
-                                {nyeJobber === a.id ? "Lagrer ..." : "Klargjort"}
-                              </button>
-                            )}{" "}
-                            {a.status === "Ny" && (
-                              <button className="btn" disabled={nyeJobber === a.id}
-                                onClick={() => settNyStatus(a, "Under arbeid")}>
-                                Under arbeid
-                              </button>
-                            )}
+                            <div className="ny-avtale-knapper">
+                              {!ferdig && (
+                                <label className="btn primary sm ny-avtale-hent" title="Dra avtale-PDF-en hit, eller klikk for å velge fil - leser ut målepunktene automatisk">
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 18v-6m0 0-2.5 2.5M12 12l2.5 2.5" /></svg>
+                                  Bekreft og hent
+                                  <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
+                                </label>
+                              )}
+                              {a.status === "Ny" && (
+                                <button className="btn sm" disabled={nyeJobber === a.id}
+                                  onClick={() => settNyStatus(a, "Under arbeid")}>
+                                  Under arbeid
+                                </button>
+                              )}
+                              {a.status === "Under arbeid" && (
+                                <button className="btn sm" disabled={nyeJobber === a.id}
+                                  onClick={() => settNyStatus(a, "Klargjort")}>
+                                  {nyeJobber === a.id ? "Lagrer ..." : "Merk klargjort"}
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2798,10 +2855,13 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .upload-btn{display:inline-flex;align-items:center;justify-content:center;background:var(--sf-accent);color:var(--sf-accent-ink);padding:10px 16px;border-radius:8px;font-weight:620;cursor:pointer;white-space:nowrap}.upload-btn input{position:absolute;opacity:0;pointer-events:none}.upload-btn:has(input:disabled){opacity:.55;cursor:not-allowed}
 .upload-btn.sm{padding:5px 10px;font-size:13px;border-radius:7px}
 .ny-avtale-edit{display:flex;flex-direction:column;gap:4px;padding:6px 0}
-.ny-avtale-edit input{font:inherit;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%}
-.ny-avtale-edit input:hover:not(:disabled){border-color:var(--sf-border)}
-.ny-avtale-edit input:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
-.ny-avtale-edit input:disabled{color:inherit;cursor:default}
+.sf-root .ny-avtale-edit input{font:inherit;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%}
+.sf-root .ny-avtale-edit input:hover:not(:disabled){border-color:var(--sf-border)}
+.sf-root .ny-avtale-edit input:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
+.sf-root .ny-avtale-edit input:disabled{color:inherit;cursor:default}
+.sf-root .ny-avtale-belop{font:inherit;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px}
+.sf-root .ny-avtale-belop:hover:not(:disabled){border-color:var(--sf-border)}
+.sf-root .ny-avtale-belop:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
 .ny-avtale-navn{font-weight:620}
 .ny-avtale-rad2{display:flex;gap:8px}
 .ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3)}
@@ -2826,6 +2886,10 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .overview-2col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:20px;align-items:stretch}
 .volum-chart .hd{align-items:flex-start;justify-content:space-between}.volum-chart .hd select{margin-left:12px}
 .volum-chart-valg{display:flex;align-items:center;gap:10px}
+.venter-varsel{display:inline-flex;align-items:center;gap:6px;color:var(--sf-warn);font-size:12.5px;font-weight:610;margin-bottom:8px}
+.ny-avtale-knapper{display:flex;flex-direction:column;gap:6px;align-items:stretch;min-width:140px}
+.ny-avtale-knapper .btn{position:relative;justify-content:center;display:inline-flex;align-items:center;gap:6px}
+.ny-avtale-hent input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .nye-faner{display:flex;gap:4px;border-bottom:1px solid var(--sf-border);margin-bottom:16px}
 .nye-faner button{font:inherit;font-size:14px;font-weight:600;padding:9px 4px 11px;margin-right:20px;border:0;border-bottom:2px solid transparent;background:none;color:var(--sf-ink-3);cursor:pointer}
 .nye-faner button.active{color:var(--sf-ink);border-bottom-color:var(--sf-accent)}
