@@ -456,12 +456,21 @@ export default function StromflytPage() {
     const gwhBekreftet = sumKwh(bekreftetAvEntelios) / 1_000_000;
     const registrertUtenForbruk = registrertHosEntelios.filter((r) => !r.aarsforbruk_kwh).length;
 
+    // Totalt solgt volum - ALT som er registrert her, uansett om det er
+    // sendt til Entelios ennå eller ikke. Skiller seg bevisst fra
+    // gwhRegistrert over: den teller kun det som faktisk er sendt videre,
+    // dette teller hele salgspipelinen (inkl. Kladd/Innmeldt/Klar for
+    // bestilling), som normalt er et større tall.
+    const gwhSolgtTotalt = sumKwh(rows) / 1_000_000;
+    const solgtUtenForbruk = rows.filter((r) => !r.aarsforbruk_kwh).length;
+
     const enUkeSiden = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const nyeDenneUken = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= enUkeSiden).length;
 
     return {
       total: rows.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
+      gwhSolgtTotalt, solgtUtenForbruk,
     };
   }, [rows]);
 
@@ -532,9 +541,14 @@ export default function StromflytPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volumVisning, volumChartYear]);
   const volumChart = useMemo(() => {
-    const registrert = rows.filter(
-      (r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios") && /^\d{4}-\d{2}/.test(r.avtalt_oppstart)
-    );
+    const alleRegistrert = rows.filter((r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Sendt Entelios"));
+    const registrert = alleRegistrert.filter((r) => /^\d{4}-\d{2}/.test(r.avtalt_oppstart));
+    // Rader som ER sendt til Entelios, men mangler oppstartsdato, kan ikke
+    // plasseres i noen måned - de teller med i GWh-flisen på Oversikt, men
+    // forsvinner fra denne grafen. Regnes ut eksplisitt slik at vi kan si
+    // fra om gapet i stedet for at tallene bare tilsynelatende ikke stemmer.
+    const utenOppstart = alleRegistrert.filter((r) => !/^\d{4}-\d{2}/.test(r.avtalt_oppstart));
+    const gwhUtenOppstart = utenOppstart.reduce((s, r) => s + (r.aarsforbruk_kwh || 0), 0) / 1_000_000;
     const years = Array.from(new Set(registrert.map((r) => Number(r.avtalt_oppstart.slice(0, 4))))).sort((a, b) => b - a);
     const perMonth = Array(12).fill(0);
     for (const r of registrert) {
@@ -555,6 +569,7 @@ export default function StromflytPage() {
       years: years.length ? years : [volumChartYear], perMonth, kumulativt,
       maks: Math.max(...perMonth, 0.01), maksKumulativt: Math.max(...kumulativt, 0.01),
       naavarendeManed, total: kumulativt[11] ?? 0,
+      gwhUtenOppstart, antallUtenOppstart: utenOppstart.length,
     };
   }, [rows, volumChartYear]);
 
@@ -1807,14 +1822,16 @@ export default function StromflytPage() {
                 ) : undefined}
               />
               <Tile
-                k="GWh registrert hos Entelios"
+                k="Estimert GWh sendt Entelios"
                 v={`${tiles.gwhRegistrert.toFixed(2)} GWh`}
-                sub={`${
-                  tiles.gwhBekreftet < tiles.gwhRegistrert
-                    ? `herav ${tiles.gwhBekreftet.toFixed(2)} GWh bekreftet · `
-                    : tiles.gwhRegistrert > 0 ? "alt bekreftet · " : ""
-                }${tiles.registrertAntall} målepunkt${tiles.registrertUtenForbruk > 0 ? ` · ${tiles.registrertUtenForbruk} mangler årsforbruk` : ""}`}
+                sub={`anslag, ikke målt · ${tiles.registrertAntall} målepunkt${tiles.registrertUtenForbruk > 0 ? ` · ${tiles.registrertUtenForbruk} mangler årsforbruk` : ""}`}
                 alert={tiles.registrertUtenForbruk > 0}
+              />
+              <Tile
+                k="Totalt solgt volum"
+                v={`${tiles.gwhSolgtTotalt.toFixed(2)} GWh`}
+                sub={`anslag, alle ${tiles.total} - uansett status · ${tiles.solgtUtenForbruk > 0 ? `${tiles.solgtUtenForbruk} mangler årsforbruk` : "alle har årsforbruk"}`}
+                alert={tiles.solgtUtenForbruk > 0}
               />
             </div>
 
@@ -1842,8 +1859,12 @@ export default function StromflytPage() {
                   <div>
                     <h2>Registrert volum</h2>
                     <span className="sub">
-                      {volumVisning === "maned" && "GWh nytt volum per måned · estimert, ikke målt forbruk"}
-                      {volumVisning === "kumulativt" && `GWh totalt akkumulert · estimert helårstotal ${volumChart.total.toFixed(2)} GWh`}
+                      {volumVisning === "maned" && (
+                        <>GWh nytt volum per måned · estimert, ikke målt forbruk{volumChart.antallUtenOppstart > 0 && ` · ${volumChart.gwhUtenOppstart.toFixed(2)} GWh (${volumChart.antallUtenOppstart} målepunkt) mangler oppstartsdato og vises ikke her`}</>
+                      )}
+                      {volumVisning === "kumulativt" && (
+                        <>GWh totalt akkumulert · estimert helårstotal {volumChart.total.toFixed(2)} GWh{volumChart.antallUtenOppstart > 0 && ` (+ ${volumChart.gwhUtenOppstart.toFixed(2)} GWh mangler oppstartsdato, vises ikke her)`}</>
+                      )}
                       {volumVisning === "faktisk" && (
                         faktiskLaster ? "Henter faktisk forbruk fra Cloud …"
                         : faktiskFeil ? `Kunne ikke hente: ${faktiskFeil}`
@@ -2606,7 +2627,8 @@ function Tile({ k, v, sub, alert, bar }: { k: string; v: string; sub?: string; a
   return (
     <div className={"tile" + (alert ? " alert" : "")}>
       <div className="k">{k}</div>
-      <div className="v">{v}{sub ? <small> {sub}</small> : null}</div>
+      <div className="v">{v}</div>
+      {sub ? <small className="tile-sub">{sub}</small> : null}
       {bar}
     </div>
   );
@@ -2721,12 +2743,12 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .import-org{display:grid;grid-template-columns:220px minmax(260px,420px) 1fr;align-items:center;gap:12px;padding:16px 18px}.import-org label{font-size:13px;font-weight:620}.import-org span{font-size:12px;color:var(--sf-ink-3)}
 .excel-sheet-picker{display:grid;grid-template-columns:80px minmax(280px,480px) 1fr;align-items:center;gap:12px;padding:16px 18px}.excel-sheet-picker label{font-size:13px;font-weight:620}.excel-sheet-picker span{font-size:12px;color:var(--sf-ink-3)}
 .mapping-table{border:0;border-radius:0}.mapping-table td{vertical-align:middle}.mapping-table input,.mapping-table select{max-width:220px}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:20px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;overflow:hidden}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);margin-bottom:20px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:10px;overflow:hidden}
 .tile{padding:14px 16px;border-left:1px solid var(--sf-border)}
 .tile:first-child{border-left:0}
 .tile .k{font-size:12px;color:var(--sf-ink-3);letter-spacing:.03em;text-transform:uppercase}
 .tile .v{font-size:27px;font-weight:680;letter-spacing:-.02em;margin-top:3px}
-.tile .v small{font-size:14px;font-weight:500;color:var(--sf-ink-3)}
+.tile-sub{display:block;font-size:12.5px;font-weight:500;color:var(--sf-ink-3);margin-top:4px;line-height:1.4}
 .tile.alert .v{color:var(--sf-warn)}
 .tile-bar{display:flex;height:5px;border-radius:999px;overflow:hidden;background:var(--sf-surface-2);margin-top:10px}
 .tile-bar .seg-1{display:block;height:100%;background:var(--sf-accent)}
