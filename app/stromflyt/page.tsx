@@ -1143,6 +1143,13 @@ export default function StromflytPage() {
   // avtalen ikke var klar ennå. Overskriver aldri felt som allerede har en
   // verdi, bortsett fra "signert" og "avtalt_oppstart" som legitimt kan gå
   // fra ukjent til kjent når avtalen kommer på plass.
+  //
+  // Selve poenget med Kladd (forarbeidet) er at den er ferdig i det øyeblikket
+  // en signert avtale lastes opp for den - tilbudet er akseptert. Knappen er
+  // uansett sperret til parsed.avtale_signert er true (se disabled-attributtet
+  // under), så her er avtalen alltid bekreftet signert når dette faktisk
+  // kjøres - flytt derfor raden videre fra Kladd til Innmeldt automatisk,
+  // uten at noen må huske å gjøre det som et eget steg etterpå.
   async function updateExistingFromAvtale() {
     if (!parsed) return;
     const chosen = parsed.rows
@@ -1152,15 +1159,18 @@ export default function StromflytPage() {
 
     setUpdatingExisting(true);
     let ok = 0;
+    let advanced = 0;
     const failures: string[] = [];
     for (const { row, index } of chosen) {
       const existing = rows.find((r) => r.maalepunkt_id === row.maalepunkt_id);
       if (!existing) { failures.push(`${row.adresse}: fant ikke lenger raden i registeret`); continue; }
       try {
+        const willAdvance = existing.status === "Kladd";
         await updateMalepunktDetails(existing.id, {
           avtalt_oppstart: existing.avtalt_oppstart || parsed.avtalt_oppstart || "",
           at_kode: existing.at_kode || (rowAtCodes[index] || "").trim(),
           signert: existing.signert || parsed.avtale_signert,
+          status: willAdvance ? "Innmeldt" : existing.status,
           kommentar: [
             existing.kommentar,
             `Oppdatert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
@@ -1168,6 +1178,7 @@ export default function StromflytPage() {
           ].filter(Boolean).join(" | "),
         });
         ok += 1;
+        if (willAdvance) advanced += 1;
       } catch (e: any) {
         failures.push(`${row.adresse}: ${e.message ?? e}`);
       }
@@ -1175,7 +1186,7 @@ export default function StromflytPage() {
     setUpdatingExisting(false);
     await refresh();
     if (ok) {
-      flash(`${ok} eksisterende målepunkt oppdatert${failures.length ? `, ${failures.length} feilet` : ""}`);
+      flash(`${ok} eksisterende målepunkt oppdatert${advanced ? ` (${advanced} flyttet fra Kladd til Klar til innmelding)` : ""}${failures.length ? `, ${failures.length} feilet` : ""}`);
       setUpdateRows({});
     } else {
       flash(failures[0] || "Ingen målepunkt ble oppdatert");
@@ -2418,10 +2429,10 @@ export default function StromflytPage() {
 
                 <div className="toolbar">
                   <strong>{parsed.rows.length} målepunkt funnet</strong>
-                  <span className="muted">Gyldige, nye rader er valgt automatisk. Dubletter med et ufullstendig Kladd-utkast fra før kan oppdateres i stedet.</span>
+                  <span className="muted">Gyldige, nye rader er valgt automatisk. Dubletter med et Kladd-utkast fra før kan flyttes til Klar til innmelding i stedet.</span>
                   <span className="grow" />
                   <button className="btn" disabled={updatingExisting || !parsed.avtale_signert || !Object.values(updateRows).some(Boolean)} onClick={updateExistingFromAvtale}>
-                    {updatingExisting ? "Oppdaterer …" : `Oppdater ${Object.values(updateRows).filter(Boolean).length} eksisterende`}
+                    {updatingExisting ? "Flytter …" : `Flytt ${Object.values(updateRows).filter(Boolean).length} til Klar til innmelding`}
                   </button>
                   <button className="btn primary" disabled={importing || !parsed.avtale_signert || !Object.values(selectedRows).some(Boolean)} onClick={importParsedRows}>
                     {importing ? "Legger inn …" : `Legg ${Object.values(selectedRows).filter(Boolean).length} i registeret`}
@@ -2439,12 +2450,12 @@ export default function StromflytPage() {
                       return <tr key={`${r.maalepunkt_id}-${i}`}>
                         <td>
                           {updatable
-                            ? <input type="checkbox" checked={!!updateRows[i]} onChange={(e) => setUpdateRows((s) => ({ ...s, [i]: e.target.checked }))} title="Oppdater eksisterende Kladd med oppstart fra avtalen" />
+                            ? <input type="checkbox" checked={!!updateRows[i]} onChange={(e) => setUpdateRows((s) => ({ ...s, [i]: e.target.checked }))} title="Fyll inn oppstart fra avtalen og flytt raden fra Kladd til Innmeldt - tilbudet er akseptert" />
                             : <input type="checkbox" checked={!!selectedRows[i]} disabled={blocked} onChange={(e) => setSelectedRows((s) => ({ ...s, [i]: e.target.checked }))} />}
                         </td>
                         <td>{r.adresse}</td><td className="num">{r.maalenummer}</td><td className="num">{r.maalepunkt_id}</td><td>{r.netteier}</td><td>{r.prisomrade}</td><td className="num">{fmt(r.aarsforbruk_kwh)}</td>
                         <td><input className="num compact-input" placeholder="kan fylles senere" value={rowAtCodes[i] || ""} disabled={blocked} onChange={(e) => setRowAtCodes((s) => ({ ...s, [i]: e.target.value }))} /></td>
-                        <td>{updatable ? <span className="pill s-klar">Kladd - kan oppdateres</span> : duplicate ? <span className="pill s-kladd">Finnes allerede</span> : r.gyldig ? <span className="pill s-aktiv">Klar</span> : <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{r.problem || "Mangler data"}</span>}</td>
+                        <td>{updatable ? <span className="pill s-klar">Kladd - flyttes til Innmeldt</span> : duplicate ? <span className="pill s-kladd">Finnes allerede</span> : r.gyldig ? <span className="pill s-aktiv">Klar</span> : <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{r.problem || "Mangler data"}</span>}</td>
                       </tr>;
                     })}</tbody>
                   </table>
