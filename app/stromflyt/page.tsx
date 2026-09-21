@@ -909,7 +909,13 @@ export default function StromflytPage() {
       setFakturaOrgNr("");
       setFakturaSignert(false);
       await refresh();
+      // Rutene havner alltid i Kladd (se lenger opp) - send brukeren dit,
+      // uansett om opplastingen skjedde fra selve Kladd-fanen eller fra den
+      // frittstående "Last opp strømfaktura"-siden, slik at resultatet alltid
+      // dukker opp der brukeren faktisk ser etter det.
       setTab("reg");
+      setWorkFilter("kladd");
+      setFltStatus("");
     } else {
       flash(failures[0] || "Ingen målepunkt ble lagt inn");
     }
@@ -1866,6 +1872,127 @@ export default function StromflytPage() {
     </div>;
   }
 
+  // Delt mellom "Last opp strømfaktura"-siden (tab==="faktura", nåbar fra
+  // "+ Ny") og selve Kladd-fanen (tab==="reg", workFilter==="kladd") - selger
+  // skal kunne laste opp en faktura og se resultatet dukke opp rett under, i
+  // stedet for å måtte laste opp ett sted og lete etter resultatet et annet.
+  function renderFakturaOpplasting() {
+    return (
+      <>
+        <div
+          className={"upload-card drop-zone" + (dragTarget === "faktura" ? " dragging" : "")}
+          onDragOver={(e) => { e.preventDefault(); setDragTarget("faktura"); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
+          onDrop={(e) => dropFile(e, "faktura")}
+        >
+          <span className="drop-zone-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4M12 4 7 9M12 4l5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg>
+          </span>
+          <h2>Last opp strømfaktura</h2>
+          <p>Dra en inngående strømfaktura hit (PDF, fra netteier eller kraftleverandør). Systemet leser målenummer, MålepunktID, adresse, netteier og forbruk uansett hvilket oppsett fakturaen har - ulike leverandører (Entelios, Lnett, Fjordkraft osv.) ser helt forskjellige ut. Du kontrollerer alltid funnene før de lagres.</p>
+          <span className="drop-zone-or">eller</span>
+          <label className="upload-btn">
+            <input type="file" accept="application/pdf,.pdf" disabled={fakturaParsing || fakturaSaving} onChange={(e) => parseFaktura(e.target.files?.[0])} />
+            {fakturaParsing ? "Leser fakturaen …" : "Velg strømfaktura"}
+          </label>
+        </div>
+
+        {fakturaRows && (
+          <div className="import-review">
+            <div className="panel import-summary">
+              <div className="hd">
+                <h2>Kontroller funnene</h2>
+                <span className="sub">{fakturaName} · {fakturaRows.length} målepunkt funnet{fakturaRows.length > 1 ? " i dokumentet" : ""}</span>
+              </div>
+              {fakturaRows.length > 1 && (
+                <div className="banner" style={{ margin: "0 18px 18px", background: "var(--sf-accent-soft)", color: "var(--sf-accent)" }}>
+                  Denne PDF-en inneholder flere målere - kontroller hver rad for seg, de kan gjelde ulike adresser eller til og med ulike leverandører.
+                </div>
+              )}
+
+              <div className="import-org">
+                <label>Kunde/organisasjon</label>
+                <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => handleFakturaKundeChange(e.target.value)} placeholder="Kundens navn" />
+                <datalist id="faktura-kunde-list">{[...new Set(rows.map((r) => r.kunde).filter(Boolean))].map((k) => <option key={k} value={k} />)}</datalist>
+                <span>
+                  {(() => {
+                    const count = fakturaKunde.trim() ? rows.filter((r) => r.kunde.trim().toLowerCase() === fakturaKunde.trim().toLowerCase()).length : 0;
+                    return fakturaKunde.trim()
+                      ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før${count > 0 ? " - org.nr/Cloud-org fylt inn automatisk under" : ""}.`
+                      : "Skriv inn eller velg fra listen - kjent kunde fyller resten ut automatisk.";
+                  })()}
+                </span>
+              </div>
+              <div className="import-org">
+                <label>Org.nr</label>
+                <input className="num" maxLength={9} value={fakturaOrgNr} onChange={(e) => handleFakturaOrgNrChange(e.target.value)} placeholder="9 siffer" />
+                <span>{fakturaEnhetMsg || "Skriv inn org.nr for å hente kundenavn automatisk fra Brønnøysundregistrene."}</span>
+              </div>
+              <div className="import-org">
+                <label>Cloud-org</label>
+                <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
+                <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+                <span>Hvilken organisasjon i Adaptic Cloud målepunktene hører til - gjelder alle valgte rader under.</span>
+              </div>
+              <div className="import-org">
+                <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>
+                <span />
+                <span>Gjelder alle valgte rader. Kan ikke sendes til Entelios før dette er krysset av.</span>
+              </div>
+            </div>
+
+            <div className="toolbar">
+              <strong>{Object.values(fakturaSelected).filter(Boolean).length} av {fakturaRows.length} valgt</strong>
+              <span className="muted">Nye, gyldige rader er valgt automatisk. Dubletter er avhuket.</span>
+              <span className="grow" />
+              <button className="btn primary" disabled={fakturaSaving || !Object.values(fakturaSelected).some(Boolean)} onClick={saveFaktura}>
+                {fakturaSaving ? "Lagrer …" : `Legg ${Object.values(fakturaSelected).filter(Boolean).length} i registeret`}
+              </button>
+            </div>
+
+            <div className="tablewrap">
+              <table>
+                <thead><tr>
+                  <th />
+                  <th>Adresse</th><th>Målenummer</th><th>MålepunktID</th><th>Netteier</th><th>Prisområde</th>
+                  <th className="num">Årsforbruk</th><th>Fakturadato</th><th>Kontroll</th>
+                </tr></thead>
+                <tbody>{fakturaRows.map((r, i) => {
+                  const duplicate = rows.some((existing) => existing.maalepunkt_id === r.malepunkt_id);
+                  const idBad = r.malepunkt_id.length !== 18;
+                  return (
+                    <tr key={`${r.malepunkt_id}-${i}`}>
+                      <td><input type="checkbox" checked={!!fakturaSelected[i]} disabled={duplicate} onChange={(e) => setFakturaSelected((s) => ({ ...s, [i]: e.target.checked }))} /></td>
+                      <td>{r.adresse}{r.postnr && <div className="muted">{r.postnr} {r.poststed}</div>}</td>
+                      <td className="num">{r.malenummer}</td>
+                      <td className="num" style={idBad ? { color: "var(--sf-crit)" } : undefined}>{r.malepunkt_id || "mangler"}</td>
+                      <td><input className="compact-input" value={fakturaRowNetteier[i] ?? r.netteier} onChange={(e) => setFakturaRowNetteier((n) => ({ ...n, [i]: e.target.value }))} /></td>
+                      <td>
+                        <input className="compact-input" style={{ width: 60 }} placeholder="NO1-NO5" value={fakturaRowPrisomrade[i] ?? ""} onChange={(e) => setFakturaRowPrisomrade((p) => ({ ...p, [i]: e.target.value }))} />
+                        {fakturaRowLookupMsg[i] && <div className="muted" style={{ fontSize: 11 }}>{fakturaRowLookupMsg[i]}</div>}
+                      </td>
+                      <td className="num">{r.arsforbruk_kwh != null ? fmt(r.arsforbruk_kwh) : "-"}</td>
+                      <td className="num">{r.fakturadato || "-"}</td>
+                      <td>
+                        {duplicate
+                          ? <span className="pill s-kladd">Finnes allerede</span>
+                          : idBad
+                            ? <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>MålepunktID ≠ 18 siffer</span>
+                            : r.usikre_felt.length
+                              ? <span className="pill s-klar" title={r.usikre_felt.join(", ")}>Usikker: {r.usikre_felt[0]}{r.usikre_felt.length > 1 ? ` +${r.usikre_felt.length - 1}` : ""}</span>
+                              : <span className="pill s-aktiv">Klar</span>}
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="sf-root">
       <style>{CSS}</style>
@@ -2413,9 +2540,12 @@ export default function StromflytPage() {
         {tab === "reg" && (
           <section>
             {workFilter === "kladd" ? (
-              <div className="worklist-heading">
-                <div><h1>Kladd</h1><span>{filtered.length} målepunkt under utarbeidelse - last opp strømfakturaer for å hente ut flere. Velg rader og last ned en Adaptic-liste når alt er klart.</span></div>
-              </div>
+              <>
+                <div className="worklist-heading">
+                  <div><h1>Kladd</h1><span>{filtered.length} målepunkt under utarbeidelse - last opp en strømfaktura under for å hente ut flere. Velg rader og last ned en Adaptic-liste når alt er klart.</span></div>
+                </div>
+                <div className="import-page kladd-opplasting">{renderFakturaOpplasting()}</div>
+              </>
             ) : (
               <div className="worklist-heading">
                 <div><h1>Arbeidsliste</h1><span>{filtered.length} målepunkt i valgt kø</span></div>
@@ -2761,116 +2891,7 @@ export default function StromflytPage() {
 
         {tab === "faktura" && (
           <section className="import-page">
-            <div
-              className={"upload-card drop-zone" + (dragTarget === "faktura" ? " dragging" : "")}
-              onDragOver={(e) => { e.preventDefault(); setDragTarget("faktura"); }}
-              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragTarget(null); }}
-              onDrop={(e) => dropFile(e, "faktura")}
-            >
-              <span className="drop-zone-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4M12 4 7 9M12 4l5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg>
-              </span>
-              <h2>Last opp strømfaktura</h2>
-              <p>Dra en inngående strømfaktura hit (PDF, fra netteier eller kraftleverandør). Systemet leser målenummer, MålepunktID, adresse, netteier og forbruk uansett hvilket oppsett fakturaen har - ulike leverandører (Entelios, Lnett, Fjordkraft osv.) ser helt forskjellige ut. Du kontrollerer alltid funnene før de lagres.</p>
-              <span className="drop-zone-or">eller</span>
-              <label className="upload-btn">
-                <input type="file" accept="application/pdf,.pdf" disabled={fakturaParsing || fakturaSaving} onChange={(e) => parseFaktura(e.target.files?.[0])} />
-                {fakturaParsing ? "Leser fakturaen …" : "Velg strømfaktura"}
-              </label>
-            </div>
-
-            {fakturaRows && (
-              <div className="import-review">
-                <div className="panel import-summary">
-                  <div className="hd">
-                    <h2>Kontroller funnene</h2>
-                    <span className="sub">{fakturaName} · {fakturaRows.length} målepunkt funnet{fakturaRows.length > 1 ? " i dokumentet" : ""}</span>
-                  </div>
-                  {fakturaRows.length > 1 && (
-                    <div className="banner" style={{ margin: "0 18px 18px", background: "var(--sf-accent-soft)", color: "var(--sf-accent)" }}>
-                      Denne PDF-en inneholder flere målere - kontroller hver rad for seg, de kan gjelde ulike adresser eller til og med ulike leverandører.
-                    </div>
-                  )}
-
-                  <div className="import-org">
-                    <label>Kunde/organisasjon</label>
-                    <input list="faktura-kunde-list" value={fakturaKunde} onChange={(e) => handleFakturaKundeChange(e.target.value)} placeholder="Kundens navn" />
-                    <datalist id="faktura-kunde-list">{[...new Set(rows.map((r) => r.kunde).filter(Boolean))].map((k) => <option key={k} value={k} />)}</datalist>
-                    <span>
-                      {(() => {
-                        const count = fakturaKunde.trim() ? rows.filter((r) => r.kunde.trim().toLowerCase() === fakturaKunde.trim().toLowerCase()).length : 0;
-                        return fakturaKunde.trim()
-                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før${count > 0 ? " - org.nr/Cloud-org fylt inn automatisk under" : ""}.`
-                          : "Skriv inn eller velg fra listen - kjent kunde fyller resten ut automatisk.";
-                      })()}
-                    </span>
-                  </div>
-                  <div className="import-org">
-                    <label>Org.nr</label>
-                    <input className="num" maxLength={9} value={fakturaOrgNr} onChange={(e) => handleFakturaOrgNrChange(e.target.value)} placeholder="9 siffer" />
-                    <span>{fakturaEnhetMsg || "Skriv inn org.nr for å hente kundenavn automatisk fra Brønnøysundregistrene."}</span>
-                  </div>
-                  <div className="import-org">
-                    <label>Cloud-org</label>
-                    <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
-                    <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
-                    <span>Hvilken organisasjon i Adaptic Cloud målepunktene hører til - gjelder alle valgte rader under.</span>
-                  </div>
-                  <div className="import-org">
-                    <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>
-                    <span />
-                    <span>Gjelder alle valgte rader. Kan ikke sendes til Entelios før dette er krysset av.</span>
-                  </div>
-                </div>
-
-                <div className="toolbar">
-                  <strong>{Object.values(fakturaSelected).filter(Boolean).length} av {fakturaRows.length} valgt</strong>
-                  <span className="muted">Nye, gyldige rader er valgt automatisk. Dubletter er avhuket.</span>
-                  <span className="grow" />
-                  <button className="btn primary" disabled={fakturaSaving || !Object.values(fakturaSelected).some(Boolean)} onClick={saveFaktura}>
-                    {fakturaSaving ? "Lagrer …" : `Legg ${Object.values(fakturaSelected).filter(Boolean).length} i registeret`}
-                  </button>
-                </div>
-
-                <div className="tablewrap">
-                  <table>
-                    <thead><tr>
-                      <th />
-                      <th>Adresse</th><th>Målenummer</th><th>MålepunktID</th><th>Netteier</th><th>Prisområde</th>
-                      <th className="num">Årsforbruk</th><th>Fakturadato</th><th>Kontroll</th>
-                    </tr></thead>
-                    <tbody>{fakturaRows.map((r, i) => {
-                      const duplicate = rows.some((existing) => existing.maalepunkt_id === r.malepunkt_id);
-                      const idBad = r.malepunkt_id.length !== 18;
-                      return (
-                        <tr key={`${r.malepunkt_id}-${i}`}>
-                          <td><input type="checkbox" checked={!!fakturaSelected[i]} disabled={duplicate} onChange={(e) => setFakturaSelected((s) => ({ ...s, [i]: e.target.checked }))} /></td>
-                          <td>{r.adresse}{r.postnr && <div className="muted">{r.postnr} {r.poststed}</div>}</td>
-                          <td className="num">{r.malenummer}</td>
-                          <td className="num" style={idBad ? { color: "var(--sf-crit)" } : undefined}>{r.malepunkt_id || "mangler"}</td>
-                          <td><input className="compact-input" value={fakturaRowNetteier[i] ?? r.netteier} onChange={(e) => setFakturaRowNetteier((n) => ({ ...n, [i]: e.target.value }))} /></td>
-                          <td>
-                            <input className="compact-input" style={{ width: 60 }} placeholder="NO1-NO5" value={fakturaRowPrisomrade[i] ?? ""} onChange={(e) => setFakturaRowPrisomrade((p) => ({ ...p, [i]: e.target.value }))} />
-                            {fakturaRowLookupMsg[i] && <div className="muted" style={{ fontSize: 11 }}>{fakturaRowLookupMsg[i]}</div>}
-                          </td>
-                          <td className="num">{r.arsforbruk_kwh != null ? fmt(r.arsforbruk_kwh) : "-"}</td>
-                          <td className="num">{r.fakturadato || "-"}</td>
-                          <td>
-                            {duplicate
-                              ? <span className="pill s-kladd">Finnes allerede</span>
-                              : idBad
-                                ? <span className="pill" style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>MålepunktID ≠ 18 siffer</span>
-                                : r.usikre_felt.length
-                                  ? <span className="pill s-klar" title={r.usikre_felt.join(", ")}>Usikker: {r.usikre_felt[0]}{r.usikre_felt.length > 1 ? ` +${r.usikre_felt.length - 1}` : ""}</span>
-                                  : <span className="pill s-aktiv">Klar</span>}
-                          </td>
-                        </tr>
-                      );
-                    })}</tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            {renderFakturaOpplasting()}
           </section>
         )}
 
@@ -3173,6 +3194,7 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .auth-root{display:grid;place-items:center;padding:24px}.login-card{width:min(430px,100%);background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:14px;padding:28px;box-shadow:0 18px 60px rgba(15,25,45,.1);display:flex;flex-direction:column;gap:14px}.login-card h1{font-size:23px}.login-card p{color:var(--sf-ink-2);margin:4px 0 0}.login-card .field{margin-top:0}.login-card .banner{margin:0}
 .banner{background:var(--sf-crit-soft);color:var(--sf-crit);border:1px solid var(--sf-crit);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:14px}
 .import-page{width:100%;max-width:none}
+.kladd-opplasting{margin-bottom:22px}
 .page-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}.page-heading h1{font-size:24px;letter-spacing:-.02em}.page-heading span{display:block;margin-top:2px;color:var(--sf-ink-3);font-size:13px}
 .page-heading-hoyre{display:flex;align-items:center;gap:12px}
 .sist-oppdatert{color:var(--sf-ink-3);font-size:12.5px;white-space:nowrap}
