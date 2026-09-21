@@ -20,6 +20,15 @@ export interface ParsedExcelRow {
   signert: boolean | null;
   paslag_ore_kwh: number | null;
   status_suggestion: "Innmeldt" | "Sendt Entelios";
+  // Fra en "Strømkunde/Leietakerfakturering"-kolonne (som i Entelios-
+  // innmeldingsmalen) - forslag til rute, ikke bindende. "" hvis fila ikke
+  // sier noe om det.
+  rute_hint: "A" | "B" | "";
+  // "Kundens avtale" i en Avtaletype/Fakturamottaker-kolonne betyr kunden
+  // har egen Entelios-avtale og Adaptic kun er fakturamottaker - IKKE en
+  // vanlig Adaptic-avtale. Skal aldri importeres stille - se
+  // Reitan/Vestenfjeldske-saken og Borg Forvaltning/Elgsetergate 16.
+  krever_manuell_avklaring: boolean;
   gyldig: boolean;
   problemer: string[];
 }
@@ -51,7 +60,10 @@ type Field =
   | "oppstartdato"
   | "kommentar"
   | "signert"
-  | "paslag_ore_kwh";
+  | "paslag_ore_kwh"
+  | "kunde"
+  | "rute_kilde"
+  | "avtaletype_kilde";
 
 function plain(value: ExcelJS.CellValue): string {
   if (value == null) return "";
@@ -75,22 +87,45 @@ function fieldFor(header: string): Field | null {
   const h = normalized(header);
   if (!h) return null;
   if (h.includes("bestiltentelios") || h === "bestilt") return "bestilt";
-  if (h.includes("referansekode") || h.includes("atkode")) return "referansekode";
+  // "Prosjektnr" (Entelios-innmeldingsmalen sitt AT-nummer-felt, f.eks.
+  // "AT30012.040") er samme slags referanse som "Referansekode"/"AT-kode" -
+  // begge peker på Adaptic sin interne prosjekt-/avtalereferanse.
+  if (h.includes("referansekode") || h.includes("atkode") || h.includes("prosjektnr")) return "referansekode";
   if (h.includes("organisasjonadapticcloud") || h === "cloudorg") return "cloud_org";
   if (h === "orgnr" || h.includes("organisasjonsnummer")) return "org_nr";
   if (h.includes("selskapsnavn")) return "selskapsnavn";
+  // "Kunde" alene (uten "selskapsnavn" i teksten) - egen kolonne i en del
+  // maler, samme betydning.
+  if (h === "kunde") return "kunde";
   if (h === "bygg") return "bygg";
   if (h === "adresse") return "adresse";
   if (h === "navn" || h === "kundeinfo") return "navn";
-  if (h.includes("malenummer")) return "maalenummer";
+  // "Målernr"/"Målernummer" er samme felt som "Målenummer", bare en annen
+  // sammensetning av de samme ordene.
+  if (h.includes("malenummer") || h.includes("malernummer") || h === "malernr") return "maalenummer";
   if (h.includes("malepunktid")) return "maalepunkt_id";
   if (h.includes("prisomrade")) return "prisomrade";
   if (h.includes("netteier")) return "netteier";
   if (h.includes("arsforbruk")) return "aarsforbruk_kwh";
-  if (h.includes("oppstartdato") || h.includes("avtaltoppstart")) return "oppstartdato";
-  if (h.includes("kommentar")) return "kommentar";
+  // "Oppstart" alene (uten "dato") er like gyldig som "Oppstartdato" -
+  // samme felt, kortere kolonnenavn i noen maler.
+  if (h.includes("oppstart")) return "oppstartdato";
+  // "Merknad" er samme fritekstfelt som "Kommentar" i andre maler.
+  if (h.includes("kommentar") || h.includes("merknad")) return "kommentar";
   if (h === "signert") return "signert";
   if (h.includes("antaltpaslag") || h.includes("antallpaslag") || h === "paslag") return "paslag_ore_kwh";
+  // "Strømkunde/Leietakerfakturering" (eller bare "Strømkunde" /
+  // "Leietakerfakturering") sier hvilken rute anlegget hører til - B for
+  // strømkunde (sluttbruker), A for leietakerfakturering.
+  if (h.includes("stromkunde") || h.includes("leietakerfakturering")) return "rute_kilde";
+  // "Avtaletype" fanger opp verdien "Kundens avtale" (kunden har egen
+  // Entelios-avtale, Adaptic er bare fakturamottaker) - skal ALDRI
+  // importeres som en vanlig Adaptic-avtale uten videre. NB: ikke slå
+  // sammen med "Fakturamottaker" her, selv om de gjerne står ved siden av
+  // hverandre i samme mal - det er en annen kolonne (peker som regel bare
+  // på Adaptic selv) og ville overskrevet denne verdien siden de deler
+  // samme rå-nøkkel per rad.
+  if (h.includes("avtaletype")) return "avtaletype_kilde";
   return null;
 }
 
@@ -129,7 +164,11 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
         if (field) candidate.set(col, field);
       });
       const values = [...candidate.values()];
-      if (values.includes("maalepunkt_id") && values.includes("adresse") && candidate.size >= 4) {
+      // Entelios sin egen innmeldingsmal har ingen egen "Adresse"-kolonne i
+      // det hele tatt - bare "Bygg" (som ofte inneholder gateadressen i
+      // parentes, f.eks. "TV12 (Tveitaråsvegen 12)"). Godta den som
+      // adressekilde når "Adresse" mangler.
+      if (values.includes("maalepunkt_id") && (values.includes("adresse") || values.includes("bygg")) && candidate.size >= 4) {
         headerRow = r;
         columns = candidate;
         break;
@@ -149,7 +188,7 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
       for (const [col, field] of columns) raw[field] = plain(sheet.getRow(r).getCell(col).value);
       const kundeHint = unnamedCustomerCol ? plain(sheet.getRow(r).getCell(unnamedCustomerCol).value) : "";
       const maalepunktId = cleanId(raw.maalepunkt_id || "");
-      const adresse = raw.adresse || "";
+      const adresse = raw.adresse || raw.bygg || "";
       if (!maalepunktId && !adresse) continue;
 
       const maalenummer = cleanId(raw.maalenummer || "");
@@ -167,13 +206,26 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
 
       const bestilt = /^(ja|yes|sendt)$/i.test(raw.bestilt || "") || /^bestilt\b/i.test(sheet.name);
       const signertRaw = raw.signert || "";
+      // "Kundens avtale" (se avtaletype_kilde over) betyr Adaptic kun er
+      // fakturamottaker på en avtale kunden selv har med Entelios - IKKE en
+      // vanlig Adaptic-avtale. Blokkeres alltid til noen har sett på den,
+      // uansett om resten av raden ellers er komplett.
+      const krevManuellAvklaring = /kundens avtale/i.test(raw.avtaletype_kilde || "");
+      // Fremst i lista, ikke bakerst - dette er en helt annen og viktigere
+      // advarsel enn et vanlig manglende datafelt (se
+      // krever_manuell_avklaring over), og skal ikke drukne bak
+      // "Mangler årsforbruk" e.l. i UI-et som bare viser problemer[0].
+      if (krevManuellAvklaring) problemer.unshift("Kundens avtale - fakturamottaker, ikke standard Adaptic-avtale");
+      const rutehint = raw.rute_kilde || "";
+      const ruteHintVerdi: "A" | "B" | "" =
+        /leietakerfakturering/i.test(rutehint) ? "A" : /stromkunde/i.test(normalized(rutehint)) ? "B" : "";
       rows.push({
         source_row: r,
         referansekode: raw.referansekode || "",
         kunde_hint: kundeHint,
         cloud_org: raw.cloud_org || "",
         org_nr: cleanId(raw.org_nr || "").slice(0, 9),
-        selskapsnavn: raw.selskapsnavn || "",
+        selskapsnavn: raw.selskapsnavn || raw.kunde || "",
         bygg: raw.bygg || kundeHint || "",
         adresse,
         navn: raw.navn || "",
@@ -187,6 +239,8 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
         signert: signertRaw ? /^(ja|yes|true)$/i.test(signertRaw) : null,
         paslag_ore_kwh: numberOrNull(raw.paslag_ore_kwh || ""),
         status_suggestion: bestilt ? "Sendt Entelios" : "Innmeldt",
+        rute_hint: ruteHintVerdi,
+        krever_manuell_avklaring: krevManuellAvklaring,
         gyldig: problemer.length === 0,
         problemer,
       });

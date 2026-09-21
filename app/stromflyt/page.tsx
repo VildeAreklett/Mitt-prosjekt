@@ -246,6 +246,16 @@ export default function StromflytPage() {
   const [excelName, setExcelName] = useState("");
   const [excelSelected, setExcelSelected] = useState<Record<number, boolean>>({});
   const [excelMappings, setExcelMappings] = useState<Record<string, ExcelGroupConfig>>({});
+  // Netteier/prisområde står sjeldent i Entelios' egne innmeldingsmaler (de
+  // har bare adresse/MålepunktID) - samme adresseoppslag som fakturaimporten
+  // bruker, ett kall pr. rad som mangler feltet fra kilden.
+  const [excelRowNetteier, setExcelRowNetteier] = useState<Record<number, string>>({});
+  const [excelRowPrisomrade, setExcelRowPrisomrade] = useState<Record<number, string>>({});
+  const [excelRowLookupMsg, setExcelRowLookupMsg] = useState<Record<number, string>>({});
+  // Entelios sin egen innmeldingsmal har ingen årsforbruk-kolonne i det hele
+  // tatt - ikke noe adresseoppslag kan gi oss den, så den må fylles inn for
+  // hånd (f.eks. fra Cloud, etter at "Sjekk i Cloud" er kjørt på raden).
+  const [excelRowAarsforbruk, setExcelRowAarsforbruk] = useState<Record<number, string>>({});
   const [dragTarget, setDragTarget] = useState<"pdf" | "excel" | "faktura" | null>(null);
   const [authLoading, setAuthLoading] = useState(requireAuth);
   const [userEmail, setUserEmail] = useState<string | null>(requireAuth ? null : "lokal test");
@@ -466,8 +476,8 @@ export default function StromflytPage() {
   );
   const excelReadyCount = useMemo(() => excelSheet?.rows.filter((r) => {
     const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
-    return excelSelected[r.source_row] && r.gyldig && !duplicate && excelMappingValid(excelMappings[excelGroupKey(r)]);
-  }).length || 0, [excelSheet, excelSelected, excelMappings, rows]);
+    return excelSelected[r.source_row] && excelRowValid(r) && !duplicate && excelMappingValid(excelMappings[excelGroupKey(r)]);
+  }).length || 0, [excelSheet, excelSelected, excelMappings, excelRowNetteier, excelRowPrisomrade, excelRowAarsforbruk, rows]);
 
   const tiles = useMemo(() => {
     const trenger = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length;
@@ -913,13 +923,74 @@ export default function StromflytPage() {
     }
   }
 
+  // Målepunkt-radene fra Entelios-innmeldingsmalen oppgir ofte ikke netteier/
+  // prisområde i det hele tatt (det er kildefilens jobb å liste anlegget, ikke
+  // slå opp nettleverandøren) - samme adresseoppslag (Kartverket + NVE) som
+  // fakturaimporten bruker til det samme problemet.
+  function excelRowProblemer(r: ParsedExcelRow): string[] {
+    const netteierOk = !!(excelRowNetteier[r.source_row] ?? r.netteier).trim();
+    const prisomradeOk = /^NO[1-5]$/.test((excelRowPrisomrade[r.source_row] ?? r.prisomrade).toUpperCase());
+    const aarsforbrukOk = /^[0-9]+$/.test((excelRowAarsforbruk[r.source_row] ?? "").trim()) || r.aarsforbruk_kwh != null;
+    return r.problemer.filter((p) => {
+      if (p === "Mangler netteier") return !netteierOk;
+      if (p === "Mangler/ugyldig prisområde") return !prisomradeOk;
+      if (p === "Mangler årsforbruk") return !aarsforbrukOk;
+      return true;
+    });
+  }
+
+  function excelRowValid(r: ParsedExcelRow): boolean {
+    return excelRowProblemer(r).length === 0;
+  }
+
+  // Rader som ble sperret fra huking av bare et manglende netteier/prisområde
+  // (ingen andre problemer) merkes automatisk på nytt så snart oppslaget
+  // løser dem - ellers må selgeren huke av dem manuelt for hver eneste rad i
+  // en fil på 100+ rader, selv om alt annet allerede er i orden.
+  function autoSelectIfResolved(r: ParsedExcelRow, netteier: string, prisomrade: string) {
+    const otherProblems = r.problemer.filter((p) => p !== "Mangler netteier" && p !== "Mangler/ugyldig prisområde");
+    const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
+    if (otherProblems.length === 0 && !duplicate && netteier.trim() && /^NO[1-5]$/.test(prisomrade.toUpperCase())) {
+      setExcelSelected((s) => ({ ...s, [r.source_row]: true }));
+    }
+  }
+
+  async function lookupExcelRowAdresse(r: ParsedExcelRow) {
+    const sourceRow = r.source_row;
+    setExcelRowLookupMsg((m) => ({ ...m, [sourceRow]: "Henter netteier/prisområde …" }));
+    try {
+      const res = await fetch("/api/netteier?address=" + encodeURIComponent(r.adresse));
+      const d = await res.json();
+      if (!d.ok) {
+        setExcelRowLookupMsg((m) => ({ ...m, [sourceRow]: d.error || "Fant ikke automatisk - fyll inn manuelt" }));
+        return;
+      }
+      const netteier = d.netteier || r.netteier;
+      const prisomrade = d.prisomrade || r.prisomrade;
+      if (d.netteier) setExcelRowNetteier((n) => ({ ...n, [sourceRow]: d.netteier }));
+      if (d.prisomrade) setExcelRowPrisomrade((p) => ({ ...p, [sourceRow]: d.prisomrade }));
+      setExcelRowLookupMsg((m) => ({ ...m, [sourceRow]: d.netteier && d.prisomrade ? "" : "Fant adressen, men ikke alt - kontroller manuelt" }));
+      autoSelectIfResolved(r, netteier, prisomrade);
+    } catch {
+      setExcelRowLookupMsg((m) => ({ ...m, [sourceRow]: "Oppslag feilet - fyll inn manuelt" }));
+    }
+  }
+
   function setupExcelSheet(sheet: ParsedExcelSheet) {
     setExcelSheetName(sheet.name);
+    setExcelRowNetteier({});
+    setExcelRowPrisomrade({});
+    setExcelRowLookupMsg({});
+    setExcelRowAarsforbruk({});
     const selected: Record<number, boolean> = {};
     const mappings: Record<string, ExcelGroupConfig> = {};
     sheet.rows.forEach((r) => {
       const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
-      selected[r.source_row] = r.gyldig && !duplicate;
+      const netteierMissing = !r.netteier.trim();
+      const prisomradeMissing = !/^NO[1-5]$/.test(r.prisomrade);
+      const otherProblems = r.problemer.filter((p) => p !== "Mangler netteier" && p !== "Mangler/ugyldig prisområde" && p !== "Mangler årsforbruk");
+      selected[r.source_row] = otherProblems.length === 0 && !duplicate;
+      if (r.adresse && (netteierMissing || prisomradeMissing)) void lookupExcelRowAdresse(r);
       const key = excelGroupKey(r);
       if (!mappings[key]) {
         const inferredRoute: Rute | "" = r.paslag_ore_kwh != null || /^strømkunder$/i.test(r.cloud_org.trim()) ? "B" : "";
@@ -945,6 +1016,10 @@ export default function StromflytPage() {
     setExcelParsing(true);
     setExcelData(null);
     setExcelName(file.name);
+    setExcelRowNetteier({});
+    setExcelRowPrisomrade({});
+    setExcelRowLookupMsg({});
+    setExcelRowAarsforbruk({});
     try {
       const body = new FormData();
       body.append("file", file);
@@ -976,7 +1051,7 @@ export default function StromflytPage() {
     if (!excelSheet) return;
     const chosen = excelSheet.rows.filter((r) => {
       const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
-      return excelSelected[r.source_row] && r.gyldig && !duplicate && excelMappingValid(excelMappings[excelGroupKey(r)]);
+      return excelSelected[r.source_row] && excelRowValid(r) && !duplicate && excelMappingValid(excelMappings[excelGroupKey(r)]);
     });
     if (!chosen.length) { flash("Ingen komplette, nye rader er klare for import"); return; }
     setExcelImporting(true);
@@ -994,9 +1069,9 @@ export default function StromflytPage() {
           adresse: r.adresse,
           maalenummer: r.maalenummer,
           maalepunkt_id: r.maalepunkt_id,
-          netteier: r.netteier,
-          prisomrade: r.prisomrade,
-          aarsforbruk_kwh: r.aarsforbruk_kwh,
+          netteier: (excelRowNetteier[r.source_row] ?? r.netteier).trim(),
+          prisomrade: (excelRowPrisomrade[r.source_row] ?? r.prisomrade).toUpperCase(),
+          aarsforbruk_kwh: r.aarsforbruk_kwh ?? (/^[0-9]+$/.test((excelRowAarsforbruk[r.source_row] ?? "").trim()) ? Number(excelRowAarsforbruk[r.source_row]) : null),
           avtalt_oppstart: r.oppstartdato,
           at_kode: r.referansekode,
           rute: mapping.rute,
@@ -2401,11 +2476,21 @@ export default function StromflytPage() {
                     <tbody>{excelSheet.rows.map((r) => {
                       const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
                       const mappingOk = excelMappingValid(excelMappings[excelGroupKey(r)]);
-                      const blocked = !r.gyldig || duplicate;
+                      const problemer = excelRowProblemer(r);
+                      const gyldig = problemer.length === 0;
+                      const blocked = !gyldig || duplicate;
                       return <tr key={r.source_row}>
                         <td><input type="checkbox" checked={!!excelSelected[r.source_row]} disabled={blocked} onChange={(e) => setExcelSelected((s) => ({ ...s, [r.source_row]: e.target.checked }))} /></td>
-                        <td className="num">{r.source_row}</td><td className="num">{r.referansekode || "-"}</td><td>{r.selskapsnavn || r.kunde_hint || r.bygg || "-"}</td><td>{r.adresse}</td><td className="num">{r.maalenummer || "-"}</td><td className="num">{r.maalepunkt_id || "-"}</td><td>{r.prisomrade || "-"}</td><td>{r.netteier || "-"}</td><td className="num">{fmt(r.aarsforbruk_kwh)}</td><td className="num">{r.oppstartdato || "-"}</td><td><span className={"pill " + (r.status_suggestion === "Sendt Entelios" ? "s-sendt" : "s-innmeldt")}>{displayStatus(r.status_suggestion)}</span></td>
-                        <td>{duplicate ? <span className="pill s-kladd">Finnes allerede</span> : !r.gyldig ? <span className="pill" title={r.problemer.join(", ")} style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{r.problemer[0]}</span> : mappingOk ? <span className="pill s-aktiv">Klar</span> : <span className="pill s-klar">Avtaleinfo mangler</span>}</td>
+                        <td className="num">{r.source_row}</td><td className="num">{r.referansekode || "-"}</td><td>{r.selskapsnavn || r.kunde_hint || r.bygg || "-"}</td><td>{r.adresse}</td><td className="num">{r.maalenummer || "-"}</td><td className="num">{r.maalepunkt_id || "-"}</td>
+                        <td>
+                          <input className="compact-input" style={{ width: 60 }} placeholder="NO1-NO5" value={excelRowPrisomrade[r.source_row] ?? r.prisomrade} onChange={(e) => setExcelRowPrisomrade((p) => ({ ...p, [r.source_row]: e.target.value }))} />
+                        </td>
+                        <td>
+                          <input className="compact-input" value={excelRowNetteier[r.source_row] ?? r.netteier} onChange={(e) => setExcelRowNetteier((n) => ({ ...n, [r.source_row]: e.target.value }))} />
+                          {excelRowLookupMsg[r.source_row] && <div className="muted" style={{ fontSize: 11 }}>{excelRowLookupMsg[r.source_row]}</div>}
+                        </td>
+                        <td className="num">{r.aarsforbruk_kwh != null ? fmt(r.aarsforbruk_kwh) : <input className="num compact-input" style={{ width: 80 }} placeholder="kWh" value={excelRowAarsforbruk[r.source_row] ?? ""} onChange={(e) => setExcelRowAarsforbruk((a) => ({ ...a, [r.source_row]: e.target.value }))} />}</td><td className="num">{r.oppstartdato || "-"}</td><td><span className={"pill " + (r.status_suggestion === "Sendt Entelios" ? "s-sendt" : "s-innmeldt")}>{displayStatus(r.status_suggestion)}</span></td>
+                        <td>{duplicate ? <span className="pill s-kladd">Finnes allerede</span> : !gyldig ? <span className="pill" title={problemer.join(", ")} style={{ color: "var(--sf-crit)", background: "var(--sf-crit-soft)" }}>{problemer[0]}</span> : mappingOk ? <span className="pill s-aktiv">Klar</span> : <span className="pill s-klar">Avtaleinfo mangler</span>}</td>
                       </tr>;
                     })}</tbody>
                   </table>
