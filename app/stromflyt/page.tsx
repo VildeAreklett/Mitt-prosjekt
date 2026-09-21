@@ -241,6 +241,11 @@ export default function StromflytPage() {
   const [excelName, setExcelName] = useState("");
   const [excelSelected, setExcelSelected] = useState<Record<number, boolean>>({});
   const [excelMappings, setExcelMappings] = useState<Record<string, ExcelGroupConfig>>({});
+  // Org.nr mangler ofte helt fra kilden (Entelios sin egen innmeldingsmal har
+  // bare kundenavn) - søkes automatisk opp mot Brønnøysundregisteret pr.
+  // referansegruppe når vi ikke allerede kjenner kunden fra registeret fra før.
+  const [excelOrgSokMsg, setExcelOrgSokMsg] = useState<Record<string, string>>({});
+  const [excelOrgSokTreff, setExcelOrgSokTreff] = useState<Record<string, { organisasjonsnummer: string; navn: string }[]>>({});
   // Netteier/prisområde står sjeldent i Entelios' egne innmeldingsmaler (de
   // har bare adresse/MålepunktID) - samme adresseoppslag som fakturaimporten
   // bruker, ett kall pr. rad som mangler feltet fra kilden.
@@ -957,14 +962,51 @@ export default function StromflytPage() {
     }
   }
 
+  // Fritekstsøk mot Brønnøysundregisteret - se merknad i app/api/enhet/route.ts
+  // om hvorfor dette gir kandidater å velge mellom fremfor å gjette blindt.
+  // Ett søk pr. UNIKT kundenavn (ikke ett pr. referansegruppe - en fil med 30
+  // referanser for samme kunde skal ikke slå opp samme navn 30 ganger),
+  // resultatet påføres alle gruppene som deler det navnet.
+  async function sokOrgNrForKunde(keys: string[], navn: string) {
+    for (const key of keys) setExcelOrgSokMsg((m) => ({ ...m, [key]: "Søker org.nr …" }));
+    try {
+      const res = await fetch("/api/enhet?navn=" + encodeURIComponent(navn));
+      const d = await res.json();
+      if (!d.ok || !d.treff?.length) {
+        for (const key of keys) setExcelOrgSokMsg((m) => ({ ...m, [key]: "Fant ikke automatisk - fyll inn manuelt" }));
+        return;
+      }
+      for (const key of keys) setExcelOrgSokTreff((t) => ({ ...t, [key]: d.treff }));
+      // Kildefilen oppgir ofte kundenavn uten selskapsform ("Propcap" i
+      // stedet for "PROPCAP AS") - normaliser bort AS/ASA/DA/ANS og
+      // skilletegn før sammenligning, ellers ville dette ALDRI telt som et
+      // sikkert nok treff til å fylles inn automatisk.
+      const norm = (s: string) => s.toLowerCase().replace(/[.,]/g, "").replace(/\b(as|asa|da|ans)\b/g, "").replace(/\s+/g, " ").trim();
+      const eksakt = d.treff.find((tr: { navn: string }) => norm(tr.navn) === norm(navn));
+      if (eksakt) {
+        for (const key of keys) {
+          setExcelMapping(key, { org_nr: eksakt.organisasjonsnummer });
+          setExcelOrgSokMsg((m) => ({ ...m, [key]: "" }));
+        }
+      } else {
+        for (const key of keys) setExcelOrgSokMsg((m) => ({ ...m, [key]: `${d.treff.length} mulige treff - velg riktig under` }));
+      }
+    } catch {
+      for (const key of keys) setExcelOrgSokMsg((m) => ({ ...m, [key]: "Søk feilet - fyll inn manuelt" }));
+    }
+  }
+
   function setupExcelSheet(sheet: ParsedExcelSheet) {
     setExcelSheetName(sheet.name);
     setExcelRowNetteier({});
     setExcelRowPrisomrade({});
     setExcelRowLookupMsg({});
     setExcelRowAarsforbruk({});
+    setExcelOrgSokMsg({});
+    setExcelOrgSokTreff({});
     const selected: Record<number, boolean> = {};
     const mappings: Record<string, ExcelGroupConfig> = {};
+    const navnOppslagQueue: { key: string; kunde: string }[] = [];
     sheet.rows.forEach((r) => {
       const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
       const netteierMissing = !r.netteier.trim();
@@ -974,19 +1016,36 @@ export default function StromflytPage() {
       if (r.adresse && (netteierMissing || prisomradeMissing)) void lookupExcelRowAdresse(r);
       const key = excelGroupKey(r);
       if (!mappings[key]) {
-        const existingCustomer = rows.find((existing) => existing.org_nr === r.org_nr);
+        const kundeNavn = (r.selskapsnavn || r.kunde_hint || r.bygg || r.cloud_org || key).trim();
+        // Kildefilen oppgir ofte ikke org.nr i det hele tatt - prøv da å
+        // kjenne igjen kunden på NAVN mot resten av registeret først (gratis,
+        // instant), før vi eventuelt søker eksternt mot Brønnøysund.
+        const existingCustomer =
+          rows.find((existing) => existing.org_nr === r.org_nr) ||
+          rows.find((existing) => existing.kunde.trim().toLowerCase() === kundeNavn.toLowerCase());
+        const orgNr = /^\d{9}$/.test(r.org_nr) ? r.org_nr : (existingCustomer?.org_nr || "");
         mappings[key] = {
-          kunde: r.selskapsnavn || r.kunde_hint || r.bygg || r.cloud_org || key,
-          org_nr: /^\d{9}$/.test(r.org_nr) ? r.org_nr : "",
+          kunde: kundeNavn,
+          org_nr: orgNr,
           selger: existingCustomer?.selger || "",
-          cloud_org: r.cloud_org || "",
+          cloud_org: r.cloud_org || existingCustomer?.cloud_org || "",
           avtaletype: r.avtaletype_hint,
           signert: r.signert ?? r.status_suggestion === "Sendt Entelios",
         };
+        if (!orgNr && kundeNavn) navnOppslagQueue.push({ key, kunde: kundeNavn });
       }
     });
     setExcelSelected(selected);
     setExcelMappings(mappings);
+    const keysPerKunde = new Map<string, string[]>();
+    for (const { key, kunde } of navnOppslagQueue) {
+      const k = kunde.toLowerCase();
+      keysPerKunde.set(k, [...(keysPerKunde.get(k) ?? []), key]);
+    }
+    for (const [, keys] of keysPerKunde) {
+      const kunde = navnOppslagQueue.find((q) => keys.includes(q.key))!.kunde;
+      void sokOrgNrForKunde(keys, kunde);
+    }
   }
 
   async function parseExcel(file: File | undefined) {
@@ -2542,7 +2601,15 @@ export default function StromflytPage() {
                         if (!m) return null;
                         return <tr key={key}>
                           <td><div className="muted num">{key}</div><input value={m.kunde} onChange={(e) => setExcelMapping(key, { kunde: e.target.value })} /></td>
-                          <td><input className="num compact-input" maxLength={9} placeholder="9 siffer" value={m.org_nr} onChange={(e) => setExcelMapping(key, { org_nr: e.target.value.replace(/\D/g, "") })} /></td>
+                          <td>
+                            <input className="num compact-input" maxLength={9} placeholder="9 siffer" value={m.org_nr} onChange={(e) => setExcelMapping(key, { org_nr: e.target.value.replace(/\D/g, "") })} />
+                            {excelOrgSokMsg[key] && <div className="muted" style={{ fontSize: 11 }}>{excelOrgSokMsg[key]}</div>}
+                            {excelOrgSokTreff[key]?.map((tr) => (
+                              <button key={tr.organisasjonsnummer} type="button" className="btn sm" style={{ display: "block", marginTop: 4 }} onClick={() => { setExcelMapping(key, { org_nr: tr.organisasjonsnummer }); setExcelOrgSokMsg((m2) => ({ ...m2, [key]: "" })); }}>
+                                {tr.navn} · {tr.organisasjonsnummer}
+                              </button>
+                            ))}
+                          </td>
                           <td><input className="compact-input" placeholder="ansvarlig selger" value={m.selger} onChange={(e) => setExcelMapping(key, { selger: e.target.value })} /></td>
                           <td><input list="excel-cloud-orgs" value={m.cloud_org} onChange={(e) => setExcelMapping(key, { cloud_org: e.target.value })} /><datalist id="excel-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist></td>
                           <td><select value={m.avtaletype} onChange={(e) => setExcelMapping(key, { avtaletype: e.target.value as ExcelGroupConfig["avtaletype"] })}><option value="">velg</option><option value="Spotavtale">Spotavtale</option><option value="Eierskifte">Eierskifte</option></select></td>
