@@ -2674,7 +2674,21 @@ export default function StromflytPage() {
                         {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}</td>}
                         {visibleCols.avtalt_oppstart && <td>{r.avtalt_oppstart || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.tsdb_id && <td className="num">{r.tsdb_id || <span className="muted">Ikke satt</span>}</td>}
-                        {visibleCols.status && <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>}
+                        {visibleCols.status && (
+                          <td>
+                            <span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span>
+                            {/* Cloud-tilkoblingen (tsdb_id) er en FAKTISK observasjon - måleren
+                                genererer reelle data - men bekrefter IKKE at DENNE avtalen er
+                                meldt inn til Entelios. Skilt tydelig fra selve status-pillen, i
+                                stedet for å la Cloud-funn hoppe forbi innmeldingssteget (se
+                                sql/audit-2026-09-21-hoppet-over-bekreftet.sql). */}
+                            {r.tsdb_id && STAGES.indexOf(r.status) < STAGES.indexOf("Bekreftet") && (
+                              <span className="cloud-badge" title="Måleren har data i Adaptic Cloud, men er ikke meldt inn til Entelios ennå">
+                                <span className="cloud-badge-dot" /> I Cloud
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td>
                           <select
                             className="action-select"
@@ -3351,6 +3365,8 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-innmeldt,.pill.s-sendt{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .pill.s-klar{color:var(--sf-warn);background:var(--sf-warn-soft)}
 .pill.s-bekreftet,.pill.s-cloud,.pill.s-aktiv{color:var(--sf-good);background:var(--sf-good-soft)}
+.cloud-badge{display:inline-flex;align-items:center;gap:4px;margin-left:6px;font-size:11px;font-weight:620;color:var(--sf-good)}
+.cloud-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--sf-good);flex:none}
 .intake{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1040px}
 .edit-banner{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--sf-accent);background:var(--sf-accent-soft);color:var(--sf-accent);border-radius:9px}.edit-banner span{font-size:13px;color:var(--sf-ink-2)}
 .sf-root fieldset{grid-column:span 1;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);padding:16px 18px 18px;margin:0}
