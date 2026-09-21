@@ -20,11 +20,12 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const malepunktId = url.searchParams.get("malepunkt_id") || "";
   const cloudOrgName = url.searchParams.get("cloud_org") || "";
+  const bygg = url.searchParams.get("bygg") || "";
   if (malepunktId.replace(/\D/g, "").length !== 18) {
     return NextResponse.json({ ok: false, error: "malepunkt_id må være 18 siffer" }, { status: 400 });
   }
 
-  const result = await slaOppMalepunktICloud(malepunktId, cloudOrgName);
+  const result = await slaOppMalepunktICloud(malepunktId, cloudOrgName, bygg);
   if (!result.ok) {
     return NextResponse.json(result, { status: 502 });
   }

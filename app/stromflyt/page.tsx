@@ -100,6 +100,16 @@ const relativDato = (iso: string | null) => {
   return d.toLocaleDateString("nb-NO", { day: "numeric", month: "short" });
 };
 
+// Samme relative form som relativDato, men MED klokkeslett - brukes kun for
+// ekte tidsstempler (opprettet), aldri for signert_dato (se merknad over).
+const relativDatoMedKlokke = (iso: string | null) => {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const kl = d.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  return `${relativDato(iso)}, ${kl}`;
+};
+
 const displayNameFromEmail = (email: string | null) => {
   if (!email) return "Profil";
   return email.split("@")[0].split(/[._-]+/).filter(Boolean)
@@ -123,9 +133,9 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
   // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
   // samlekø for "dette gjenstår å sende inn".
-  { key: "handling", label: "Klar til innmelding", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
+  { key: "handling", label: "Ikke meldt inn", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
-  { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet"] },
+  { key: "klar-cloud", label: "Registrert Entelios", statuses: ["Bekreftet"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
   // Ikke en arbeidskø (den trenger ingen handling - "Satt opp i Cloud" og
@@ -181,6 +191,9 @@ export default function StromflytPage() {
   // inn, i stedet for at brukeren må huske å gjøre det som et eget steg.
   const [nyAvtaleKobling, setNyAvtaleKobling] = useState<NyAvtale | null>(null);
   const [nyAvtaleDrag, setNyAvtaleDrag] = useState<string | null>(null);
+  // Signert-datoen vises normalt som lesbar tekst (relativDato), ikke som en
+  // rå datovelger - klikk for å slå om til redigering for én rad av gangen.
+  const [nyAvtaleDatoRedigerer, setNyAvtaleDatoRedigerer] = useState<string | null>(null);
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -194,7 +207,7 @@ export default function StromflytPage() {
   );
   const [colsMenuOpen, setColsMenuOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<{ tittel: string; detalj?: string } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -358,19 +371,25 @@ export default function StromflytPage() {
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setNyeJobber(null); }
   }
-  function flash(m: string) {
+  // `detalj` er valgfri - gir et to-linjers kort (fet tittel + dempet
+  // detaljlinje, f.eks. "Systemene svarer" / "Cloud-sjekk 08:42") i stedet
+  // for den vanlige ett-linjes bekreftelsen. Brukt for lengre kjørende
+  // handlinger (Cloud-oppslag) der brukeren har nytte av å se AT noe pågår,
+  // ikke bare det ferdige resultatet.
+  function flash(tittel: string, detalj?: string) {
     // Flere flash()-kall etter hverandre (f.eks. "Sjekker i Cloud …" fulgt av
     // selve resultatet et par sekunder senere) må kansellere HVERANDRES
     // planlagte fjerning - ellers kan en tidligere, kortere timeout fyre av
     // rett etter at den nye meldingen ble satt, og slette den igjen nesten
     // øyeblikkelig (så meldingen "blinker" og forsvinner på under et sekund).
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-    setToast(m);
+    setToast({ tittel, detalj });
     // Lengre meldinger (f.eks. feilmeldinger med detaljer) trenger mer tid
     // til å bli lest enn en kort bekreftelse - varier visningstiden med
     // tekstlengden i stedet for én fast, ofte for kort, varighet.
-    const varighet = Math.min(9000, Math.max(3000, m.length * 60));
-    toastTimerRef.current = window.setTimeout(() => setToast(""), varighet);
+    const lengde = tittel.length + (detalj?.length ?? 0);
+    const varighet = Math.min(9000, Math.max(3000, lengde * 60));
+    toastTimerRef.current = window.setTimeout(() => setToast(null), varighet);
   }
 
   async function stromflytAuthHeaders(): Promise<HeadersInit> {
@@ -1389,7 +1408,7 @@ export default function StromflytPage() {
   > {
     try {
       const headers = await stromflytAuthHeaders();
-      const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "" });
+      const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "", bygg: r.bygg || "" });
       const res = await fetch(`/api/cloud/sjekk-malepunkt?${qs.toString()}`, { headers });
       const data = await res.json();
       if (!res.ok || !data.ok) return { ok: false, error: data.error || "Ukjent feil" };
@@ -1437,8 +1456,12 @@ export default function StromflytPage() {
     }
   }
 
+  function klokkeslett() {
+    return new Date().toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+  }
+
   async function sjekkICloud(r: Malepunkt) {
-    flash("Sjekker i Cloud …");
+    flash("Systemene svarer", `Cloud-sjekk ${klokkeslett()}`);
     const result = await sjekkEnMaalerICloud(r);
     if (!result.ok) { flash("Feil ved Cloud-oppslag: " + result.error); return; }
     if (!result.funnet) {
@@ -1459,7 +1482,7 @@ export default function StromflytPage() {
     let funnet = 0, ikkeFunnet = 0, feilet = 0;
     for (let i = 0; i < targets.length; i++) {
       const r = targets[i];
-      flash(`Sjekker i Cloud … (${i + 1}/${targets.length}: ${r.bygg})`);
+      flash("Systemene svarer", `Cloud-sjekk ${i + 1}/${targets.length}: ${r.bygg}`);
       const result = await sjekkEnMaalerICloud(r);
       if (!result.ok) feilet += 1;
       else if (result.funnet) funnet += 1;
@@ -1943,18 +1966,13 @@ export default function StromflytPage() {
 
         <div className="app-body">
           <nav className="sidenav" aria-label="Hovedmeny">
-            <div className="sidenav-merke">FORARBEID</div>
-            {/* For selgere som utarbeider en avtale FØR den finnes - laster
-                opp strømfaktura og får målepunktene hentet ut som Kladd,
-                lenge før noe sendes til Entelios. Egen seksjon, ikke blant
-                arbeidskøene, siden den ikke er en del av innmeldingsløpet. */}
-            <button className={tab === "reg" && workFilter === "kladd" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter("kladd"); setFltStatus(""); }}>
-              <span>Kladd</span>
-              {rows.filter((r) => r.status === "Kladd").length > 0 && (
-                <span className="sidenav-tall">{rows.filter((r) => r.status === "Kladd").length}</span>
-              )}
+            <div className="sidenav-merke">ARBEIDSFLATE</div>
+            <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+              <span>Oversikt</span>
             </button>
-            <div className="sidenav-merke">ARBEIDSKØER</div>
+            <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
+              <span>Arbeidsliste</span>
+            </button>
             {/* Nye avtaler kommer automatisk fra fakturakontroll når en ren
                 strømleveranse blir signert. De har ingen målepunkter ennå, og
                 står derfor foran resten av løpet. */}
@@ -1966,6 +1984,19 @@ export default function StromflytPage() {
                 </span>
               )}
             </button>
+            {/* For selgere som utarbeider en avtale før den finnes - laster
+                opp strømfaktura og får målepunktene hentet ut som Kladd,
+                lenge før noe sendes til Entelios. */}
+            <button className={tab === "reg" && workFilter === "kladd" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter("kladd"); setFltStatus(""); }}>
+              <span>Kladd</span>
+              {rows.filter((r) => r.status === "Kladd").length > 0 && (
+                <span className="sidenav-tall">{rows.filter((r) => r.status === "Kladd").length}</span>
+              )}
+            </button>
+            <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
+              <span>Registrering</span>
+            </button>
+            <div className="sidenav-merke">STATUSKØER</div>
             {WORK_FILTERS.filter((f) => f.key && !f.skjult).map((f) => {
               const count = rows.filter((r) => f.statuses.includes(r.status)).length;
               const active = tab === "reg" && workFilter === f.key;
@@ -1976,16 +2007,6 @@ export default function StromflytPage() {
                 </button>
               );
             })}
-            <div className="sidenav-merke">VISNINGER</div>
-            <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
-              <span>Oversikt</span>
-            </button>
-            <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
-              <span>Arbeidsliste</span>
-            </button>
-            <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
-              <span>Registrering</span>
-            </button>
             <div className="sidenav-fot">
               Registeret erstatter strømavtale-Excel-arket. Fram til Entelios-integrasjonen er på plass sendes bestillinger på mail.
             </div>
@@ -2043,7 +2064,7 @@ export default function StromflytPage() {
                       <th>Avtale</th>
                       <th>Signert</th>
                       <th style={{ textAlign: "right" }}>Beløp</th>
-                      <th>Avtaledokument</th>
+                      <th>Dokument</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -2082,26 +2103,23 @@ export default function StromflytPage() {
                                 onBlur={(e) => { if (e.target.value !== a.avtalenavn) lagreFelt({ avtalenavn: e.target.value }); }}
                               />
                               <div className="ny-avtale-rad2">
-                                <label className="ny-avtale-felt">
-                                  <span className="ny-avtale-label">Kunde</span>
-                                  <input
-                                    key={a.id + "-kunde"}
-                                    placeholder="Ikke satt"
-                                    defaultValue={a.kunde}
-                                    disabled={ferdig}
-                                    onBlur={(e) => { if (e.target.value !== a.kunde) lagreFelt({ kunde: e.target.value }); }}
-                                  />
-                                </label>
-                                <label className="ny-avtale-felt">
-                                  <span className="ny-avtale-label">AT-kode</span>
-                                  <input
-                                    key={a.id + "-at"}
-                                    placeholder="Ikke satt"
-                                    defaultValue={a.at_nummer}
-                                    disabled={ferdig}
-                                    onBlur={(e) => { if (e.target.value !== a.at_nummer) lagreFelt({ at_nummer: e.target.value }); }}
-                                  />
-                                </label>
+                                <input
+                                  key={a.id + "-kunde"}
+                                  className="ny-avtale-kunde"
+                                  placeholder="Kunde"
+                                  defaultValue={a.kunde}
+                                  disabled={ferdig}
+                                  onBlur={(e) => { if (e.target.value !== a.kunde) lagreFelt({ kunde: e.target.value }); }}
+                                />
+                                <span className="ny-avtale-sep">·</span>
+                                <input
+                                  key={a.id + "-at"}
+                                  className="ny-avtale-at"
+                                  placeholder="AT-kode"
+                                  defaultValue={a.at_nummer}
+                                  disabled={ferdig}
+                                  onBlur={(e) => { if (e.target.value !== a.at_nummer) lagreFelt({ at_nummer: e.target.value }); }}
+                                />
                               </div>
                               <input
                                 key={a.id + "-kommentar"}
@@ -2113,15 +2131,29 @@ export default function StromflytPage() {
                             </div>
                           </td>
                           <td className="num">
-                            <input
-                              key={a.id + "-signert"}
-                              type="date"
-                              className="ny-avtale-dato"
-                              defaultValue={a.signert_dato ?? ""}
-                              disabled={ferdig}
-                              title={a.signert_dato ? relativDato(a.signert_dato) : "Ikke satt"}
-                              onBlur={(e) => { if (e.target.value !== (a.signert_dato ?? "")) lagreFelt({ signert_dato: e.target.value || null }); }}
-                            />
+                            {!ferdig && nyAvtaleDatoRedigerer === a.id ? (
+                              <input
+                                key={a.id + "-signert"}
+                                type="date"
+                                className="ny-avtale-dato"
+                                autoFocus
+                                defaultValue={a.signert_dato ?? ""}
+                                onBlur={(e) => {
+                                  if (e.target.value !== (a.signert_dato ?? "")) lagreFelt({ signert_dato: e.target.value || null });
+                                  setNyAvtaleDatoRedigerer(null);
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="ny-avtale-dato-visning"
+                                disabled={ferdig}
+                                onClick={() => setNyAvtaleDatoRedigerer(a.id)}
+                                title={ferdig ? undefined : "Klikk for å endre"}
+                              >
+                                {a.signert_dato ? relativDato(a.signert_dato) : relativDatoMedKlokke(a.opprettet)}
+                              </button>
+                            )}
                           </td>
                           <td className="num" style={{ textAlign: "right" }}>
                             <input
@@ -2137,14 +2169,21 @@ export default function StromflytPage() {
                             />
                           </td>
                           <td style={{ minWidth: 180 }}>
-                            <input
-                              key={a.id + "-pandadoc"}
-                              className="ny-avtale-lenke"
-                              placeholder="Lim inn PandaDoc-lenke"
-                              defaultValue={a.pandadoc_url}
-                              disabled={ferdig}
-                              onBlur={(e) => { if (e.target.value !== a.pandadoc_url) lagreFelt({ pandadoc_url: e.target.value.trim() }); }}
-                            />
+                            {a.pandadoc_url ? (
+                              <a className="ny-avtale-pandadoc-link" href={a.pandadoc_url} target="_blank" rel="noreferrer">
+                                Åpne i PandaDoc
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14 21 3" /></svg>
+                              </a>
+                            ) : (
+                              <input
+                                key={a.id + "-pandadoc"}
+                                className="ny-avtale-lenke"
+                                placeholder="Lim inn PandaDoc-lenke"
+                                defaultValue={a.pandadoc_url}
+                                disabled={ferdig}
+                                onBlur={(e) => { if (e.target.value !== a.pandadoc_url) lagreFelt({ pandadoc_url: e.target.value.trim() }); }}
+                              />
+                            )}
                           </td>
                           <td style={{ whiteSpace: "nowrap" }}>
                             <div className="ny-avtale-knapper">
@@ -2197,7 +2236,7 @@ export default function StromflytPage() {
 
             <div className="tiles">
               <Tile k="Målepunkt totalt" v={String(tiles.total)} sub={tiles.nyeDenneUken > 0 ? `+${tiles.nyeDenneUken} denne uken` : undefined} />
-              <Tile k="Klar til innmelding" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
+              <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile
                 k="Eierskifte / Spotavtale"
                 v={`${tiles.eierskifte} / ${tiles.spotavtale}`}
@@ -3010,7 +3049,17 @@ export default function StromflytPage() {
         </div>
       )}
 
-      <div className={"toast" + (toast ? " show" : "")}>{toast}</div>
+      <div className={"toast" + (toast ? " show" : "")}>
+        {toast?.detalj ? (
+          <>
+            <span className="toast-dot" aria-hidden="true" />
+            <span className="toast-tekst">
+              <b>{toast.tittel}</b>
+              <span>{toast.detalj}</span>
+            </span>
+          </>
+        ) : (toast?.tittel ?? "")}
+      </div>
     </div>
   );
 }
@@ -3129,16 +3178,20 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .sf-root .ny-avtale-belop{font:inherit;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px}
 .sf-root .ny-avtale-belop:hover:not(:disabled){border-color:var(--sf-border)}
 .sf-root .ny-avtale-belop:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
-.ny-avtale-navn{font-weight:620}
-.ny-avtale-rad2{display:flex;gap:8px}
-.ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3)}
-.ny-avtale-felt{flex:1;min-width:0}
-.ny-avtale-label{display:block;font-size:10.5px;font-weight:620;letter-spacing:.03em;color:var(--sf-ink-3);text-transform:uppercase;margin-bottom:1px}
+.ny-avtale-navn{font-weight:700;font-size:14.5px}
+.ny-avtale-rad2{display:flex;align-items:center;gap:4px}
+.ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3);width:auto}
+.ny-avtale-kunde{flex:1;min-width:0}
+.ny-avtale-at{flex:none;width:90px!important}
+.ny-avtale-sep{color:var(--sf-ink-3);font-size:12.5px}
 .ny-avtale-edit>input[placeholder="Kommentar"]{font-size:12.5px;color:var(--sf-ink-3)}
 .ny-avtale-belop{text-align:right;width:100%}
 .sf-root .ny-avtale-dato{font:inherit;font-family:var(--sf-mono);border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%;color-scheme:light}
 .sf-root .ny-avtale-dato:hover:not(:disabled){border-color:var(--sf-border)}
 .sf-root .ny-avtale-dato:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none}
+.ny-avtale-dato-visning{font:inherit;font-family:var(--sf-mono);border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;color:inherit;cursor:pointer;text-align:right}
+.ny-avtale-dato-visning:hover:not(:disabled){border-color:var(--sf-border)}
+.ny-avtale-dato-visning:disabled{cursor:default;color:inherit}
 .sf-root .ny-avtale-lenke{font:inherit;font-size:12.5px;border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%;color:var(--sf-ink-2)}
 .sf-root .ny-avtale-lenke:hover:not(:disabled){border-color:var(--sf-border)}
 .sf-root .ny-avtale-lenke:focus{border-color:var(--sf-accent);background:var(--sf-surface);outline:none;color:var(--sf-ink)}
@@ -3269,8 +3322,13 @@ td .muted{color:var(--sf-ink-3)}
 .modal .hd h2{font-size:16px}
 .modal .bd{padding:18px 20px}
 .history-modal{max-width:680px}.history-event{display:grid;grid-template-columns:14px 1fr;gap:10px;padding:12px 0;border-bottom:1px solid var(--sf-border)}.history-event:last-child{border-bottom:0}.history-dot{width:9px;height:9px;border-radius:50%;background:var(--sf-accent);margin-top:7px}.history-event b{font-size:14px}.history-event small{display:block;color:var(--sf-ink-3);margin-top:3px}.history-event .muted{font-size:13px;color:var(--sf-ink-2)}
-.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-ink);color:var(--sf-ground);padding:10px 18px;border-radius:14px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none;max-width:520px;white-space:normal;text-align:center;line-height:1.4}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--sf-navy);color:#fff;padding:10px 18px;border-radius:14px;font-size:14px;font-weight:550;opacity:0;transition:opacity .2s,transform .2s;z-index:60;pointer-events:none;max-width:520px;white-space:normal;text-align:center;line-height:1.4;display:flex;align-items:center;justify-content:center;gap:9px;box-shadow:0 12px 30px rgba(10,20,35,.35)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast-dot{width:8px;height:8px;border-radius:50%;background:var(--sf-good);flex:none;animation:toast-puls 1.4s ease-in-out infinite}
+.toast-tekst{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px}
+.toast-tekst b{font-weight:650;font-size:14px}
+.toast-tekst span{font-size:12px;color:#93a5ba;font-weight:500}
+@keyframes toast-puls{0%,100%{opacity:1}50%{opacity:.35}}
 @media (max-width:1100px){.overview-queues{grid-template-columns:repeat(3,minmax(170px,1fr))}.brand-panel p{display:none}.topbar{grid-template-columns:auto minmax(0,1fr) auto}}
 @media (max-width:900px){
   .app-body{grid-template-columns:1fr}

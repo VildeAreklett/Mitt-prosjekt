@@ -67,7 +67,7 @@ export async function GET(req: Request) {
   const feilmeldinger: string[] = [];
 
   for (const rad of utvalg) {
-    const result = await slaOppMalepunktICloud(rad.maalepunkt_id as string, (rad.cloud_org as string) || "");
+    const result = await slaOppMalepunktICloud(rad.maalepunkt_id as string, (rad.cloud_org as string) || "", (rad.bygg as string) || "");
     if (!result.ok) {
       feilet += 1;
       feilmeldinger.push(`${rad.bygg}: ${result.error}`);

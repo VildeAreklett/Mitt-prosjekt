@@ -142,7 +142,22 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
   return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», minted token, men /v0/metrics avvist (HTTP ${metricsRes.status})` };
 }
 
-export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName: string): Promise<CloudLookupResult> {
+// Fjerner adressen i parentes ("TV12 (Tveitaråsvegen 12)" -> "tv12") og
+// normaliserer ellers likt organisasjonsnavn-sammenligningen - Entelios sin
+// egen innmeldingsmal og Cloud sin egen byggliste skriver ofte samme bygg
+// litt forskjellig ellers (store/små bokstaver, mellomrom).
+function normalizeByggnavn(navn: string): string {
+  return navn
+    .replace(/\([^)]*\)/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9æøå]/g, "");
+}
+
+export async function slaOppMalepunktICloud(
+  malepunktIdRaw: string,
+  cloudOrgName: string,
+  byggNavn?: string,
+): Promise<CloudLookupResult> {
   const malepunktId = malepunktIdRaw.replace(/\D/g, "");
   if (malepunktId.length !== 18) {
     return { ok: false, error: "malepunkt_id må være 18 siffer" };
@@ -156,11 +171,18 @@ export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
     let harHattEtVellykketKall = false;
+    // Samler ALLE hentede målere på tvers av metodene - MålepunktID
+    // (eno-feltet i Cloud) stemmer ikke alltid nøyaktig med kildefilens
+    // 18-sifrede kode (ulik formatering, eller feltet er rett og slett ikke
+    // fylt ut for den måleren i Cloud), men bygningsnavnet er ofte identisk.
+    // Brukes som fallback under, ALDRI som førstevalg.
+    const alleMetrics: CloudMetric[] = [];
 
     const kjor = async (result: MethodResult) => {
       diagnostikk.push(`${result.metode}: ${result.info}`);
       if (!result.metrics) return;
       harHattEtVellykketKall = true;
+      alleMetrics.push(...result.metrics);
       if (treff) return; // allerede funnet via en tidligere metode
       const funnet = result.metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
       if (funnet) {
@@ -184,6 +206,7 @@ export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName
         const metrics = (await res.json()) as CloudMetric[];
         diagnostikk.push(`X-Api-Key: ${metrics.length} målere hentet`);
         harHattEtVellykketKall = true;
+        alleMetrics.push(...metrics);
         const funnet = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
         if (funnet) { treff = funnet; brukteMetode = "X-Api-Key"; }
       } else {
@@ -193,6 +216,27 @@ export async function slaOppMalepunktICloud(malepunktIdRaw: string, cloudOrgName
 
     if (!harHattEtVellykketKall) {
       return { ok: false, error: "Ingen av metodene ble godkjent av Adaptic Cloud. Detaljer: " + diagnostikk.join(" | ") };
+    }
+
+    // Fallback på bygningsnavn - kun når MålepunktID ikke ga treff. Krever
+    // et ENTYDIG treff (nøyaktig én måler i den organisasjonen med samme
+    // normaliserte byggnavn) - et bygg med flere målere (typisk flere
+    // leietakere/anlegg) skal ALDRI gjettes blindt, det ville kunnet koble
+    // feil måler til feil MålepunktID.
+    if (!treff && byggNavn?.trim()) {
+      const target = normalizeByggnavn(byggNavn);
+      if (target) {
+        const kandidater = alleMetrics.filter((m) => m.building?.name && normalizeByggnavn(m.building.name) === target);
+        if (kandidater.length === 1) {
+          treff = kandidater[0];
+          brukteMetode = "bygningsnavn (MålepunktID stemte ikke)";
+          diagnostikk.push(`bygningsnavn-fallback: 1 entydig treff på «${byggNavn}»`);
+        } else if (kandidater.length > 1) {
+          diagnostikk.push(`bygningsnavn-fallback: ${kandidater.length} målere deler byggnavn «${byggNavn}» - for usikkert å velge automatisk`);
+        } else {
+          diagnostikk.push(`bygningsnavn-fallback: ingen målere med byggnavn «${byggNavn}»`);
+        }
+      }
     }
 
     if (!treff) {
