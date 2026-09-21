@@ -198,7 +198,11 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
       // å kreve det her ville blokkert import av ellers helt gyldige rader.
       if (!/^NO[1-5]$/.test(prisomrade)) problemer.push("Mangler/ugyldig prisområde");
       if (!(raw.netteier || "").trim()) problemer.push("Mangler netteier");
-      if (aarsforbruk == null) problemer.push("Mangler årsforbruk");
+      // Årsforbruk er heller IKKE blokkerende, av samme grunn som målenummer
+      // over: Entelios sin egen innmeldingsmal har ingen slik kolonne i det
+      // hele tatt, og å kreve den ville blokkert import av alt fra en slik
+      // fil. Kan fylles inn manuelt i etterkant (se excelRowAarsforbruk i
+      // stromflyt/page.tsx), eller hentes fra faktisk Cloud-forbruk senere.
       if (!oppstart) problemer.push("Mangler oppstartsdato");
 
       const bestilt = /^(ja|yes|sendt)$/i.test(raw.bestilt || "") || /^bestilt\b/i.test(sheet.name);

@@ -913,11 +913,9 @@ export default function StromflytPage() {
   function excelRowProblemer(r: ParsedExcelRow): string[] {
     const netteierOk = !!(excelRowNetteier[r.source_row] ?? r.netteier).trim();
     const prisomradeOk = /^NO[1-5]$/.test((excelRowPrisomrade[r.source_row] ?? r.prisomrade).toUpperCase());
-    const aarsforbrukOk = /^[0-9]+$/.test((excelRowAarsforbruk[r.source_row] ?? "").trim()) || r.aarsforbruk_kwh != null;
     return r.problemer.filter((p) => {
       if (p === "Mangler netteier") return !netteierOk;
       if (p === "Mangler/ugyldig prisområde") return !prisomradeOk;
-      if (p === "Mangler årsforbruk") return !aarsforbrukOk;
       return true;
     });
   }
@@ -971,7 +969,7 @@ export default function StromflytPage() {
       const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
       const netteierMissing = !r.netteier.trim();
       const prisomradeMissing = !/^NO[1-5]$/.test(r.prisomrade);
-      const otherProblems = r.problemer.filter((p) => p !== "Mangler netteier" && p !== "Mangler/ugyldig prisområde" && p !== "Mangler årsforbruk");
+      const otherProblems = r.problemer.filter((p) => p !== "Mangler netteier" && p !== "Mangler/ugyldig prisområde");
       selected[r.source_row] = otherProblems.length === 0 && !duplicate;
       if (r.adresse && (netteierMissing || prisomradeMissing)) void lookupExcelRowAdresse(r);
       const key = excelGroupKey(r);
@@ -1018,6 +1016,30 @@ export default function StromflytPage() {
 
   function setExcelMapping(key: string, patch: Partial<ExcelGroupConfig>) {
     setExcelMappings((m) => ({ ...m, [key]: { ...m[key], ...patch } }));
+  }
+
+  // Én Entelios-innmeldingsmal grupperer ofte etter Prosjektnr/referanse (én
+  // rad pr. referanse i denne tabellen), men de fleste referansene i praksis
+  // tilhører samme kunde og skal ha identisk org.nr/selger/strøm-org/
+  // avtaletype/signert - uten dette måtte selgeren skrive det samme på nytt
+  // for hver eneste referanse (30+ ganger for en fil som Propcap sin).
+  function kopierMappingTilSammeKunde(key: string) {
+    const kilde = excelMappings[key];
+    if (!kilde) return;
+    const kildeKunde = kilde.kunde.trim().toLowerCase();
+    if (!kildeKunde) return;
+    setExcelMappings((m) => {
+      const next = { ...m };
+      let antall = 0;
+      for (const k of Object.keys(next)) {
+        if (k === key) continue;
+        if (next[k].kunde.trim().toLowerCase() !== kildeKunde) continue;
+        next[k] = { ...next[k], org_nr: kilde.org_nr, selger: kilde.selger, cloud_org: kilde.cloud_org, avtaletype: kilde.avtaletype, signert: kilde.signert };
+        antall += 1;
+      }
+      flash(antall ? `Kopiert til ${antall} andre referanser for ${kilde.kunde}` : "Fant ingen andre referanser med samme kundenavn");
+      return next;
+    });
   }
 
   function excelMappingValid(m: ExcelGroupConfig | undefined) {
@@ -2516,7 +2538,14 @@ export default function StromflytPage() {
                           <td><input list="excel-cloud-orgs" value={m.cloud_org} onChange={(e) => setExcelMapping(key, { cloud_org: e.target.value })} /><datalist id="excel-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist></td>
                           <td><select value={m.avtaletype} onChange={(e) => setExcelMapping(key, { avtaletype: e.target.value as ExcelGroupConfig["avtaletype"] })}><option value="">velg</option><option value="Spotavtale">Spotavtale</option><option value="Eierskifte">Eierskifte</option></select></td>
                           <td><label className="checkline"><input type="checkbox" checked={m.signert} onChange={(e) => setExcelMapping(key, { signert: e.target.checked })} /> Ja</label></td>
-                          <td>{excelMappingValid(m) ? <span className="pill s-aktiv">Klar</span> : <span className="pill s-klar">Mangler felt</span>}</td>
+                          <td>
+                            {excelMappingValid(m) ? <span className="pill s-aktiv">Klar</span> : <span className="pill s-klar">Mangler felt</span>}
+                            {excelMappingValid(m) && (
+                              <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={() => kopierMappingTilSammeKunde(key)} title={`Kopier org.nr/selger/strøm-org/avtaletype/signert til alle andre referanser med kundenavn «${m.kunde}»`}>
+                                Bruk på alle «{m.kunde}»
+                              </button>
+                            )}
+                          </td>
                         </tr>;
                       })}</tbody>
                     </table>
