@@ -12,7 +12,6 @@ import {
   NETTEIERE,
   PRISOMRADER,
   validateMalepunkt,
-  kommersielt,
   nextStatus,
   previousStatus,
   fmt,
@@ -20,7 +19,6 @@ import {
   ENTELIOS_MAIL,
   type Malepunkt,
   type Status,
-  type Rute,
 } from "../../lib/stromflyt-config";
 import {
   listMalepunkt,
@@ -52,9 +50,7 @@ type ExcelGroupConfig = {
   org_nr: string;
   selger: string;
   cloud_org: string;
-  rute: Rute | "";
-  paslag_ore_kwh: string;
-  fast_aarspris: string;
+  avtaletype: "Eierskifte" | "Spotavtale" | "";
   signert: boolean;
 };
 
@@ -109,13 +105,20 @@ const displayNameFromEmail = (email: string | null) => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 };
 
-type WorkFilter = "" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "revisjon";
+type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "revisjon";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
 
 const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult?: boolean }[] = [
   { key: "", label: "Alle", statuses: [] },
+  // Selgers eget forarbeid FØR avtalen finnes - laster opp strømfaktura for
+  // en potensiell kunde og får innmeldingsfaktorene hentet ut automatisk
+  // (adresse/MålepunktID/netteier/forbruk), uten at noe av det ennå er en
+  // reell innmelding. Egen, skjult WORK_FILTERS-oppføring - vises i sitt eget
+  // sidemenyavsnitt (se "FORARBEID" i navigasjonen) i stedet for blant de
+  // andre arbeidskøene, siden den ikke hører til selve innmeldingsløpet.
+  { key: "kladd", label: "Kladd", statuses: ["Kladd"], skjult: true },
   // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
   // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
   // samlekø for "dette gjenstår å sende inn".
@@ -147,9 +150,6 @@ const REG_COLUMNS: { key: string; label: string }[] = [
   { key: "prisomrade", label: "Prisområde" },
   { key: "aarsforbruk_kwh", label: "Årsforbruk" },
   { key: "avtalt_oppstart", label: "Oppstartsdato" },
-  { key: "rute", label: "Rute" },
-  { key: "kommersielt", label: "Kommersielt" },
-  { key: "avtaletype", label: "Overtakelse" },
   { key: "tsdb_id", label: "tsdb_id" },
   { key: "status", label: "Status" },
 ];
@@ -158,8 +158,7 @@ const REG_COLUMNS_STORAGE_KEY = "stromflyt_synlige_kolonner";
 const emptyForm: Partial<Malepunkt> = {
   kunde: "", org_nr: "", selger: "", cloud_org: "", bygg: "", adresse: "", maalenummer: "",
   maalepunkt_id: "", netteier: "", prisomrade: "", aarsforbruk_kwh: null,
-  avtalt_oppstart: "", at_kode: "", rute: "", paslag_ore_kwh: null,
-  fast_pr_maaler: null, fast_aarspris: null, signert: false, kommentar: "",
+  avtalt_oppstart: "", at_kode: "", signert: false, kommentar: "",
   avtaletype: "", leverandoravtale_fil_sti: null,
   kontaktperson_navn: "", kontaktperson_epost: "", tsdb_id: null,
 };
@@ -184,7 +183,6 @@ export default function StromflytPage() {
   const [rows, setRows] = useState<Malepunkt[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [fltRute, setFltRute] = useState("");
   const [fltStatus, setFltStatus] = useState("");
   const [workFilter, setWorkFilter] = useState<WorkFilter>("");
   const [search, setSearch] = useState("");
@@ -210,8 +208,8 @@ export default function StromflytPage() {
   const [selectedRows, setSelectedRows] = useState<Record<number, boolean>>({});
   const [rowAtCodes, setRowAtCodes] = useState<Record<number, string>>({});
   // Rader avtalen matcher mot et MålepunktID som allerede ligger i registeret
-  // (typisk en Kladd fanget opp fra en strømfaktura, som mangler rute/
-  // oppstart/vilkår) - disse kan velges for OPPDATERING i stedet for å bare
+  // (typisk en Kladd fanget opp fra en strømfaktura, som mangler oppstart/
+  // avtaletype) - disse kan velges for OPPDATERING i stedet for å bare
   // hoppes over som dublett.
   const [updateRows, setUpdateRows] = useState<Record<number, boolean>>({});
   const [updatingExisting, setUpdatingExisting] = useState(false);
@@ -224,8 +222,8 @@ export default function StromflytPage() {
   // Én PDF kan inneholde flere fakturaer/målere (samlefaktura, eller - sett i
   // praksis - to helt separate fakturaer limt i samme fil) - derfor en liste,
   // med egen redigerbar netteier/prisområde/valgt-status per rad. Kunde,
-  // org.nr, rute og kommersielt er felles for hele opplastingen, siden det
-  // vanligste er at alle radene i én faktura tilhører samme kunde.
+  // org.nr er felles for hele opplastingen, siden det vanligste er at alle
+  // radene i én faktura tilhører samme kunde.
   const [fakturaRows, setFakturaRows] = useState<ParsedFakturaRow[] | null>(null);
   const [fakturaRowNetteier, setFakturaRowNetteier] = useState<Record<number, string>>({});
   const [fakturaRowPrisomrade, setFakturaRowPrisomrade] = useState<Record<number, string>>({});
@@ -235,9 +233,6 @@ export default function StromflytPage() {
   const [fakturaOrgNr, setFakturaOrgNr] = useState("");
   const [fakturaEnhetMsg, setFakturaEnhetMsg] = useState("");
   const [fakturaCloudOrg, setFakturaCloudOrg] = useState("Strømkunder");
-  const [fakturaRute, setFakturaRute] = useState<Rute | "">("");
-  const [fakturaPaslag, setFakturaPaslag] = useState("");
-  const [fakturaFastArspris, setFakturaFastArspris] = useState("");
   const [fakturaSignert, setFakturaSignert] = useState(false);
   const [excelParsing, setExcelParsing] = useState(false);
   const [excelImporting, setExcelImporting] = useState(false);
@@ -334,7 +329,7 @@ export default function StromflytPage() {
   // filter endres, fjernes tidligere valg slik at skjulte rader ikke behandles.
   useEffect(() => {
     setSelectedIds([]);
-  }, [search, fltRute, fltStatus, workFilter]);
+  }, [search, fltStatus, workFilter]);
 
   async function refresh() {
     setLoading(true);
@@ -408,7 +403,7 @@ export default function StromflytPage() {
   }
 
   // Redigering av en eksisterende rad skal ikke kreve at ALLE innmeldingsfelt
-  // (oppstart, referansekode, signert, rute) er utfylt - en Kladd skal kunne
+  // (oppstart, referansekode, signert) er utfylt - en Kladd skal kunne
   // rettes opp litt etter litt. Kun ved ny manuell registrering (ikke
   // redigering) kreves alt utfylt før man kan trykke "Registrer målepunkt".
   const errors = useMemo(() => validateMalepunkt(form, { draft: !!editingId }), [form, editingId]);
@@ -419,8 +414,7 @@ export default function StromflytPage() {
     const activeWork = WORK_FILTERS.find((f) => f.key === workFilter);
     const result = rows.filter((r) => {
       const text = [r.kunde, r.selger, r.bygg, r.adresse, r.maalepunkt_id, r.maalenummer, r.at_kode, r.netteier].join(" ").toLowerCase();
-      return (!fltRute || r.rute === fltRute)
-        && (!fltStatus || r.status === fltStatus)
+      return (!fltStatus || r.status === fltStatus)
         && (!activeWork?.statuses.length || activeWork.statuses.includes(r.status))
         && (!q || text.includes(q));
     });
@@ -441,7 +435,7 @@ export default function StromflytPage() {
       const stage = STAGES.indexOf(a.status) - STAGES.indexOf(b.status);
       return stage || (a.avtalt_oppstart || "9999").localeCompare(b.avtalt_oppstart || "9999");
     });
-  }, [rows, fltRute, fltStatus, workFilter, search, sortKey]);
+  }, [rows, fltStatus, workFilter, search, sortKey]);
 
   // Globalt søk i toppen: finner et målepunkt uansett hvilken visning man står
   // i, i motsetning til søkefeltet i arbeidslisten som bare filtrerer der.
@@ -453,7 +447,7 @@ export default function StromflytPage() {
       .slice(0, 8);
   }, [rows, globalSearch]);
   const regColSpan = useMemo(
-    () => 3 + REG_COLUMNS.filter((c) => visibleCols[c.key] ?? true).length,
+    () => 4 + REG_COLUMNS.filter((c) => visibleCols[c.key] ?? true).length,
     [visibleCols]
   );
   const batchRows = useMemo(() => rows.filter((r) => r.status === "Klar for bestilling"), [rows]);
@@ -683,7 +677,7 @@ export default function StromflytPage() {
       if (!res.ok || !data.ok) throw new Error(data.error || "Kunne ikke lese avtalen");
       const result = data as ParsedAvtale & { ok: true };
       setParsed(result);
-      setImportCloudOrg(result.rute === "B" ? "Strømkunder" : result.kunde || "");
+      setImportCloudOrg(result.kunde || "");
       setImportSeller(rows.find((r) => r.org_nr === result.org_nr)?.selger || "");
       const next: Record<number, boolean> = {};
       const nextUpdate: Record<number, boolean> = {};
@@ -691,9 +685,10 @@ export default function StromflytPage() {
         const existing = rows.find((row) => row.maalepunkt_id === r.maalepunkt_id);
         next[i] = r.gyldig && !existing;
         // Foreslå oppdatering som standard kun når det som allerede ligger der
-        // faktisk mangler rute (typisk en Kladd fanget fra en strømfaktura) -
-        // ikke overskriv en ferdig utfylt rad uten at brukeren ber om det.
-        if (existing && !existing.rute) nextUpdate[i] = true;
+        // faktisk er en Kladd (fanget fra en strømfaktura, mangler oppstart/
+        // avtaletype) - ikke overskriv en ferdig utfylt rad uten at brukeren
+        // ber om det.
+        if (existing && existing.status === "Kladd") nextUpdate[i] = true;
       });
       setSelectedRows(next);
       setUpdateRows(nextUpdate);
@@ -790,8 +785,8 @@ export default function StromflytPage() {
   }
 
   // Det vanlige er flere hovedmålere på samme kunde/bygg over tid, ikke bare
-  // ett. Kjenner vi igjen kunden fra før, fylles org.nr/Cloud-org/rute/vilkår
-  // inn automatisk fra siste registrering på samme kunde i stedet for at
+  // ett. Kjenner vi igjen kunden fra før, fylles org.nr/Cloud-org inn
+  // automatisk fra siste registrering på samme kunde i stedet for at
   // selgeren må taste det på nytt for hver nye faktura. Overskriver aldri felt
   // brukeren allerede har endret manuelt.
   function handleFakturaKundeChange(value: string) {
@@ -800,9 +795,6 @@ export default function StromflytPage() {
     if (!match) return;
     if (!fakturaOrgNr) setFakturaOrgNr(match.org_nr);
     if (!fakturaCloudOrg || fakturaCloudOrg === "Strømkunder") setFakturaCloudOrg(match.cloud_org);
-    if (!fakturaRute) setFakturaRute(match.rute);
-    if (match.rute === "B" && !fakturaPaslag && match.paslag_ore_kwh != null) setFakturaPaslag(String(match.paslag_ore_kwh));
-    if (match.rute === "A" && !fakturaFastArspris && match.fast_aarspris != null) setFakturaFastArspris(String(match.fast_aarspris));
   }
 
   // Motsatt vei av kunde->org.nr-utfyllingen over: skriv inn org.nr, få
@@ -829,18 +821,16 @@ export default function StromflytPage() {
   }
 
   async function saveFaktura() {
-    // Rute, oppstartsdato og kommersielle vilkår kommer fra AVTALEN, ikke fra
-    // fakturaen - de er ofte ikke avklart ennå når selger fanger opp et
-    // målepunkt fra en faktura. Kun kunde/org.nr (for å vite hvem det tilhører)
+    // Oppstartsdato og avtaletype kommer fra AVTALEN, ikke fra fakturaen - de
+    // er ikke avklart ennå når selger fanger opp et målepunkt fra en faktura
+    // i forarbeidet (Kladd). Kun kunde/org.nr (for å vite hvem det tilhører)
     // og det fakturaen faktisk kan gi (adresse/målenummer/MålepunktID/netteier)
     // er påkrevd her - resten fylles ut senere når avtalen er klar. Kunde/
-    // org.nr/rute/vilkår er felles for alle valgte rader i denne opplastingen.
+    // org.nr er felles for alle valgte rader i denne opplastingen.
     if (!fakturaRows || !fakturaKunde.trim() || !/^\d{9}$/.test(fakturaOrgNr)) {
       flash("Kunde og org.nr (9 siffer) må fylles ut");
       return;
     }
-    if (fakturaRute === "B" && fakturaPaslag && !/^\d+([.,]\d+)?$/.test(fakturaPaslag)) { flash("Påslag må være et tall (øre/kWh)"); return; }
-    if (fakturaRute === "A" && fakturaFastArspris && !/^\d+$/.test(fakturaFastArspris)) { flash("Fast årspris må være et helt tall (kr)"); return; }
     const chosen = fakturaRows.map((r, i) => ({ r, i })).filter(({ i }) => fakturaSelected[i]);
     if (!chosen.length) { flash("Velg minst ett målepunkt"); return; }
     setFakturaSaving(true);
@@ -866,15 +856,11 @@ export default function StromflytPage() {
           aarsforbruk_kwh: r.arsforbruk_kwh,
           avtalt_oppstart: "",
           at_kode: "",
-          rute: fakturaRute,
-          paslag_ore_kwh: fakturaRute === "B" && fakturaPaslag ? Number(fakturaPaslag.replace(",", ".")) : null,
-          fast_pr_maaler: null,
-          fast_aarspris: fakturaRute === "A" && fakturaFastArspris ? Number(fakturaFastArspris) : null,
           signert: fakturaSignert,
           kommentar: [
             `Importert fra strømfaktura: ${fakturaName}${r.kundenr_hos_leverandor ? ` (kundenr ${r.kundenr_hos_leverandor} hos nåværende leverandør)` : ""}`,
             r.usikre_felt.length ? `Usikre felt ved utlesing: ${r.usikre_felt.join(", ")} - bør bekreftes.` : "",
-            !fakturaRute ? "Rute/oppstart/kommersielt ikke avklart ennå - fyll inn når avtalen er klar." : "",
+            "Oppstart/avtaletype ikke avklart ennå - fyll inn når avtalen er klar.",
           ].filter(Boolean).join(" "),
           avtaletype: "",
           leverandoravtale_fil_sti: null,
@@ -882,7 +868,7 @@ export default function StromflytPage() {
           kontaktperson_epost: "",
           tsdb_id: null,
           cloud_metric_id: null,
-        }, fakturaRute ? "Innmeldt" : "Kladd");
+        }, "Kladd");
         ok += 1;
       } catch (e: any) {
         failures.push(`${r.adresse}: ${e.message ?? e}`);
@@ -895,9 +881,6 @@ export default function StromflytPage() {
       setFakturaName("");
       setFakturaKunde("");
       setFakturaOrgNr("");
-      setFakturaRute("");
-      setFakturaPaslag("");
-      setFakturaFastArspris("");
       setFakturaSignert(false);
       await refresh();
       setTab("reg");
@@ -993,16 +976,13 @@ export default function StromflytPage() {
       if (r.adresse && (netteierMissing || prisomradeMissing)) void lookupExcelRowAdresse(r);
       const key = excelGroupKey(r);
       if (!mappings[key]) {
-        const inferredRoute: Rute | "" = r.paslag_ore_kwh != null || /^strømkunder$/i.test(r.cloud_org.trim()) ? "B" : "";
         const existingCustomer = rows.find((existing) => existing.org_nr === r.org_nr);
         mappings[key] = {
           kunde: r.selskapsnavn || r.kunde_hint || r.bygg || r.cloud_org || key,
           org_nr: /^\d{9}$/.test(r.org_nr) ? r.org_nr : "",
           selger: existingCustomer?.selger || "",
-          cloud_org: r.cloud_org || (inferredRoute === "B" ? "Strømkunder" : ""),
-          rute: inferredRoute,
-          paslag_ore_kwh: r.paslag_ore_kwh != null ? String(r.paslag_ore_kwh) : "",
-          fast_aarspris: "",
+          cloud_org: r.cloud_org || "",
+          avtaletype: r.avtaletype_hint,
           signert: r.signert ?? r.status_suggestion === "Sendt Entelios",
         };
       }
@@ -1041,10 +1021,7 @@ export default function StromflytPage() {
   }
 
   function excelMappingValid(m: ExcelGroupConfig | undefined) {
-    if (!m || !m.kunde.trim() || !/^\d{9}$/.test(m.org_nr) || !m.cloud_org.trim() || !m.signert) return false;
-    if (m.rute === "B") return /^\d+([.,]\d+)?$/.test(m.paslag_ore_kwh);
-    if (m.rute === "A") return /^\d+$/.test(m.fast_aarspris);
-    return false;
+    return !!m && !!m.kunde.trim() && /^\d{9}$/.test(m.org_nr) && !!m.cloud_org.trim() && !!m.avtaletype && m.signert;
   }
 
   async function importExcelRows() {
@@ -1074,13 +1051,9 @@ export default function StromflytPage() {
           aarsforbruk_kwh: r.aarsforbruk_kwh ?? (/^[0-9]+$/.test((excelRowAarsforbruk[r.source_row] ?? "").trim()) ? Number(excelRowAarsforbruk[r.source_row]) : null),
           avtalt_oppstart: r.oppstartdato,
           at_kode: r.referansekode,
-          rute: mapping.rute,
-          paslag_ore_kwh: mapping.rute === "B" ? Number(mapping.paslag_ore_kwh.replace(",", ".")) : null,
-          fast_pr_maaler: null,
-          fast_aarspris: mapping.rute === "A" ? Number(mapping.fast_aarspris) : null,
           signert: mapping.signert,
           kommentar: [r.kommentar, `Importert fra ${excelName} · ${excelSheet.name} rad ${r.source_row}`].filter(Boolean).join(" · "),
-          avtaletype: "",
+          avtaletype: mapping.avtaletype,
           leverandoravtale_fil_sti: null,
           kontaktperson_navn: "",
           kontaktperson_epost: "",
@@ -1098,7 +1071,7 @@ export default function StromflytPage() {
   }
 
   async function importParsedRows() {
-    if (!parsed || !parsed.rute || !parsed.kunde || !parsed.org_nr) return;
+    if (!parsed || !parsed.kunde || !parsed.org_nr) return;
     if (!parsed.avtale_signert) {
       flash("Avtalen må være ferdig signert før den legges i registeret");
       return;
@@ -1117,7 +1090,7 @@ export default function StromflytPage() {
           kunde: parsed.kunde,
           org_nr: parsed.org_nr,
           selger: importSeller.trim(),
-          cloud_org: importCloudOrg || (parsed.rute === "B" ? "Strømkunder" : parsed.kunde),
+          cloud_org: importCloudOrg || parsed.kunde,
           bygg: row.adresse,
           adresse: row.adresse,
           maalenummer: row.maalenummer,
@@ -1129,10 +1102,6 @@ export default function StromflytPage() {
           // AT-kode finnes normalt ikke i avtalen. Den kan fylles per rad i
           // forhåndsvisningen, eller suppleres senere før Entelios-bestilling.
           at_kode: (rowAtCodes[index] || "").trim(),
-          rute: parsed.rute,
-          paslag_ore_kwh: parsed.rute === "B" ? parsed.paslag_ore_kwh : null,
-          fast_pr_maaler: parsed.fast_pr_maaler,
-          fast_aarspris: parsed.rute === "A" ? parsed.fast_aarspris : null,
           signert: parsed.avtale_signert,
           kommentar: [
             `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
@@ -1169,13 +1138,13 @@ export default function StromflytPage() {
     }
   }
 
-  // Fyller igjen hullene (rute/vilkår/oppstart/signert/AT-kode) på målepunkt
-  // som allerede ligger i registeret - typisk en Kladd fanget opp fra en
-  // strømfaktura, der avtalen ikke var klar ennå. Overskriver aldri felt som
-  // allerede har en verdi, bortsett fra "signert" og "avtalt_oppstart" som
-  // legitimt kan gå fra ukjent til kjent når avtalen kommer på plass.
+  // Fyller igjen hullene (oppstart/signert/AT-kode) på målepunkt som allerede
+  // ligger i registeret - typisk en Kladd fanget opp fra en strømfaktura, der
+  // avtalen ikke var klar ennå. Overskriver aldri felt som allerede har en
+  // verdi, bortsett fra "signert" og "avtalt_oppstart" som legitimt kan gå
+  // fra ukjent til kjent når avtalen kommer på plass.
   async function updateExistingFromAvtale() {
-    if (!parsed || !parsed.rute) { flash("Fant ikke rute i avtalen"); return; }
+    if (!parsed) return;
     const chosen = parsed.rows
       .map((row, index) => ({ row, index }))
       .filter(({ index }) => updateRows[index]);
@@ -1189,10 +1158,6 @@ export default function StromflytPage() {
       if (!existing) { failures.push(`${row.adresse}: fant ikke lenger raden i registeret`); continue; }
       try {
         await updateMalepunktDetails(existing.id, {
-          rute: existing.rute || parsed.rute,
-          paslag_ore_kwh: existing.rute === "A" ? existing.paslag_ore_kwh : (existing.paslag_ore_kwh ?? (parsed.rute === "B" ? parsed.paslag_ore_kwh : null)),
-          fast_pr_maaler: existing.fast_pr_maaler ?? parsed.fast_pr_maaler,
-          fast_aarspris: existing.rute === "B" ? existing.fast_aarspris : (existing.fast_aarspris ?? (parsed.rute === "A" ? parsed.fast_aarspris : null)),
           avtalt_oppstart: existing.avtalt_oppstart || parsed.avtalt_oppstart || "",
           at_kode: existing.at_kode || (rowAtCodes[index] || "").trim(),
           signert: existing.signert || parsed.avtale_signert,
@@ -1415,10 +1380,7 @@ export default function StromflytPage() {
         bygg: form.bygg!, adresse: form.adresse!, maalenummer: form.maalenummer!,
         maalepunkt_id: form.maalepunkt_id!, netteier: form.netteier!, prisomrade: form.prisomrade!,
         aarsforbruk_kwh: aarsforbrukTomt ? null : Number(form.aarsforbruk_kwh), avtalt_oppstart: form.avtalt_oppstart || "",
-        at_kode: form.at_kode || "", rute: (form.rute || "") as Rute | "",
-        paslag_ore_kwh: form.rute === "B" && form.paslag_ore_kwh != null ? Number(form.paslag_ore_kwh) : null,
-        fast_pr_maaler: form.fast_pr_maaler != null && form.fast_pr_maaler !== ("" as any) ? Number(form.fast_pr_maaler) : null,
-        fast_aarspris: form.rute === "A" && form.fast_aarspris != null ? Number(form.fast_aarspris) : null,
+        at_kode: form.at_kode || "",
         signert: !!form.signert, kommentar: form.kommentar ?? "",
         avtaletype: (form.avtaletype || "") as Malepunkt["avtaletype"],
         leverandoravtale_fil_sti: form.avtaletype === "Eierskifte" ? (form.leverandoravtale_fil_sti ?? null) : null,
@@ -1611,6 +1573,80 @@ export default function StromflytPage() {
     flash(`${eksportRader.length} rader lastet ned`);
   }
 
+  // Adaptic-fronten selgeren laster ned fra Kladd-fanen for å bruke i eget
+  // avtalearbeid - egen, penere stil enn den interne arbeidslisteeksporten
+  // (bransjelogo finnes ikke ennå, se merknad i sidenav - bruker firmanavn +
+  // aksentfarge i stedet, samme stil som resten av appen).
+  async function eksporterKladd() {
+    const eksportRader = selectedRowsForBulk.length > 0 ? selectedRowsForBulk : filtered;
+    if (!eksportRader.length) { flash("Ingen kladd-rader å eksportere"); return; }
+    const columns: { label: string; value: (r: Malepunkt) => string | number; width: number; numFmt?: string; align?: "right" }[] = [
+      { label: "Kunde", value: (r) => r.kunde, width: 26 },
+      { label: "Bygg", value: (r) => r.bygg, width: 26 },
+      { label: "Adresse", value: (r) => r.adresse, width: 28 },
+      { label: "Målenummer", value: (r) => r.maalenummer || "", width: 20 },
+      { label: "MålepunktID", value: (r) => r.maalepunkt_id, width: 22 },
+      { label: "Netteier", value: (r) => r.netteier, width: 16 },
+      { label: "Prisområde", value: (r) => r.prisomrade, width: 12 },
+      { label: "Årsforbruk (kWh)", value: (r) => r.aarsforbruk_kwh ?? "", width: 16, numFmt: "#,##0", align: "right" },
+      { label: "Kommentar", value: (r) => r.kommentar || "", width: 32 },
+    ];
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Adaptic Technology AS - Strømflyt";
+    const ws = wb.addWorksheet("Kladd");
+    const lastCol = columns.length;
+
+    ws.mergeCells(1, 1, 1, lastCol);
+    const tittel = ws.getCell(1, 1);
+    tittel.value = "Adaptic Technology AS";
+    tittel.font = { bold: true, size: 18, color: { argb: "FF10202E" } };
+    tittel.alignment = { vertical: "middle" };
+    ws.getRow(1).height = 30;
+
+    ws.mergeCells(2, 1, 2, lastCol);
+    const undertittel = ws.getCell(2, 1);
+    const kunder = [...new Set(eksportRader.map((r) => r.kunde).filter(Boolean))];
+    undertittel.value = `Strømflyt · Kladd-liste${kunder.length === 1 ? ` - ${kunder[0]}` : ""} · ${new Date().toLocaleDateString("nb-NO")}`;
+    undertittel.font = { size: 12, color: { argb: "FF566571" } };
+    ws.getRow(2).height = 20;
+
+    const overskriftRad = 4;
+    ws.getRow(overskriftRad).values = columns.map((c) => c.label);
+    const overskrift = ws.getRow(overskriftRad);
+    overskrift.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF009C91" } };
+      cell.alignment = { vertical: "middle" };
+    });
+    overskrift.height = 20;
+
+    eksportRader.forEach((r, i) => {
+      const row = ws.getRow(overskriftRad + 1 + i);
+      row.values = columns.map((c) => c.value(r));
+      columns.forEach((c, ci) => {
+        const cell = row.getCell(ci + 1);
+        if (c.numFmt) cell.numFmt = c.numFmt;
+        if (c.align) cell.alignment = { horizontal: c.align };
+        if (i % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7F9" } };
+      });
+    });
+
+    columns.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
+    ws.views = [{ state: "frozen", ySplit: overskriftRad }];
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const filnavnKunde = kunder.length === 1 ? `-${kunder[0].toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/(^-|-$)/g, "")}` : "";
+    link.download = `adaptic-kladd${filnavnKunde}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    flash(`${eksportRader.length} rader lastet ned`);
+  }
+
   async function eksporterNyeAvtaler() {
     if (!nyeAvtaler.length) { flash("Ingen nye avtaler å eksportere"); return; }
     const columns: { label: string; value: (a: NyAvtale) => string | number }[] = [
@@ -1783,6 +1819,17 @@ export default function StromflytPage() {
 
         <div className="app-body">
           <nav className="sidenav" aria-label="Hovedmeny">
+            <div className="sidenav-merke">FORARBEID</div>
+            {/* For selgere som utarbeider en avtale FØR den finnes - laster
+                opp strømfaktura og får målepunktene hentet ut som Kladd,
+                lenge før noe sendes til Entelios. Egen seksjon, ikke blant
+                arbeidskøene, siden den ikke er en del av innmeldingsløpet. */}
+            <button className={tab === "reg" && workFilter === "kladd" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter("kladd"); setFltStatus(""); }}>
+              <span>Kladd</span>
+              {rows.filter((r) => r.status === "Kladd").length > 0 && (
+                <span className="sidenav-tall">{rows.filter((r) => r.status === "Kladd").length}</span>
+              )}
+            </button>
             <div className="sidenav-merke">ARBEIDSKØER</div>
             {/* Nye avtaler kommer automatisk fra fakturakontroll når en ren
                 strømleveranse blir signert. De har ingen målepunkter ennå, og
@@ -2181,18 +2228,19 @@ export default function StromflytPage() {
 
         {tab === "reg" && (
           <section>
-            <div className="worklist-heading">
-              <div><h1>Arbeidsliste</h1><span>{filtered.length} målepunkt i valgt kø</span></div>
-              <button className="btn primary" onClick={() => setBatchOpen(true)}>Merk som sendt til Entelios</button>
-            </div>
+            {workFilter === "kladd" ? (
+              <div className="worklist-heading">
+                <div><h1>Kladd</h1><span>{filtered.length} målepunkt under utarbeidelse - last opp strømfakturaer for å hente ut flere. Velg rader og last ned en Adaptic-liste når alt er klart.</span></div>
+              </div>
+            ) : (
+              <div className="worklist-heading">
+                <div><h1>Arbeidsliste</h1><span>{filtered.length} målepunkt i valgt kø</span></div>
+                <button className="btn primary" onClick={() => setBatchOpen(true)}>Merk som sendt til Entelios</button>
+              </div>
+            )}
 
             <div className="toolbar work-toolbar">
               <input className="work-search" type="search" placeholder="Søk kunde, bygg, adresse, MålepunktID …" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <label className="flt">Rute
-                <select value={fltRute} onChange={(e) => setFltRute(e.target.value)}>
-                  <option value="">alle</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option>
-                </select>
-              </label>
               <label className="flt">Status
                 <select value={fltStatus} onChange={(e) => { setFltStatus(e.target.value); setWorkFilter(""); }}>
                   <option value="">alle</option>
@@ -2228,7 +2276,11 @@ export default function StromflytPage() {
                   </>
                 )}
               </div>
-              <button className="btn" disabled={!filtered.length} onClick={downloadWorklist}>Last ned arbeidsliste (Excel)</button>
+              {workFilter === "kladd" ? (
+                <button className="btn primary" disabled={!filtered.length} onClick={() => void eksporterKladd()}>Last ned Adaptic-liste (Excel)</button>
+              ) : (
+                <button className="btn" disabled={!filtered.length} onClick={downloadWorklist}>Last ned arbeidsliste (Excel)</button>
+              )}
             </div>
 
             {selectedRowsForBulk.length > 0 && <div className="bulk-bar">
@@ -2252,6 +2304,7 @@ export default function StromflytPage() {
                 <thead><tr>
                   <th className="select-cell"><input type="checkbox" aria-label="Velg alle synlige" checked={allVisibleSelected} onChange={(e) => toggleAllVisible(e.target.checked)} /></th>
                   <th>Kunde</th>
+                  <th>Avtaletype</th>
                   {visibleCols.selger && <th>Selger</th>}
                   {visibleCols.bygg && <th>Bygg</th>}
                   {visibleCols.maalepunkt_id && <th>MålepunktID</th>}
@@ -2259,9 +2312,6 @@ export default function StromflytPage() {
                   {visibleCols.prisomrade && <th>Prisomr.</th>}
                   {visibleCols.aarsforbruk_kwh && <th className="num">Årsforbruk</th>}
                   {visibleCols.avtalt_oppstart && <th>Oppstartsdato</th>}
-                  {visibleCols.rute && <th>Rute</th>}
-                  {visibleCols.kommersielt && <th>Kommersielt</th>}
-                  {visibleCols.avtaletype && <th>Overtakelse</th>}
                   {visibleCols.tsdb_id && <th>tsdb_id</th>}
                   {visibleCols.status && <th>Status</th>}
                   <th>Handling</th>
@@ -2276,6 +2326,7 @@ export default function StromflytPage() {
                       <tr key={r.id}>
                         <td className="select-cell"><input type="checkbox" aria-label={`Velg ${r.bygg}`} checked={selectedIds.includes(r.id)} onChange={(e) => toggleSelected(r.id, e.target.checked)} /></td>
                         <td>{r.kunde}</td>
+                        <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>
                         {visibleCols.selger && <td>{r.selger || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.bygg && <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>}
                         {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
@@ -2283,9 +2334,6 @@ export default function StromflytPage() {
                         {visibleCols.prisomrade && <td>{r.prisomrade}</td>}
                         {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}</td>}
                         {visibleCols.avtalt_oppstart && <td>{r.avtalt_oppstart || <span className="muted">Ikke satt</span>}</td>}
-                        {visibleCols.rute && <td><span className={"rute " + r.rute}>{r.rute}</span></td>}
-                        {visibleCols.kommersielt && <td>{kommersielt(r)}</td>}
-                        {visibleCols.avtaletype && <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.tsdb_id && <td className="num">{r.tsdb_id || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.status && <td><span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span></td>}
                         <td>
@@ -2345,8 +2393,6 @@ export default function StromflytPage() {
                   <div className="summary-grid">
                     <Summary k="Kunde" v={parsed.kunde || "Ikke funnet"} />
                     <Summary k="Org.nr" v={parsed.org_nr || "Ikke funnet"} mono />
-                    <Summary k="Rute" v={parsed.rute === "B" ? "B · strømsalg" : parsed.rute === "A" ? "A · leietaker" : "Ikke funnet"} />
-                    <Summary k="Vilkår" v={parsed.rute === "B" ? `${parsed.paslag_ore_kwh ?? "?"} øre/kWh${parsed.fast_pr_maaler != null ? ` + ${fmt(parsed.fast_pr_maaler)} kr/måler/mnd` : ""}` : `${fmt(parsed.fast_aarspris)} kr/år`} />
                     <Summary k="Oppstart" v={parsed.avtalt_oppstart || "Ikke funnet"} mono />
                     <Summary k="Signatur" v={parsed.avtale_signert ? "Fullført i PandaDoc" : "Ikke bekreftet"} good={parsed.avtale_signert} bad={!parsed.avtale_signert} />
                   </div>
@@ -2354,7 +2400,7 @@ export default function StromflytPage() {
                     <label>Kunde/organisasjon for strømregistreringen</label>
                     <input list="cloud-org-list" value={importCloudOrg} onChange={(e) => setImportCloudOrg(e.target.value)} />
                     <datalist id="cloud-org-list">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
-                    <span>{parsed.rute === "B" ? "Rene strømsalg legges normalt under Strømkunder." : "Kontroller hvilken kundeorganisasjon bygget tilhører."}</span>
+                    <span>Kontroller hvilken kundeorganisasjon bygget tilhører.</span>
                   </div>
                   <div className="import-org">
                     <label>Selger for kunden</label>
@@ -2388,12 +2434,12 @@ export default function StromflytPage() {
                     <tbody>{parsed.rows.map((r, i) => {
                       const existing = rows.find((row) => row.maalepunkt_id === r.maalepunkt_id);
                       const duplicate = !!existing;
-                      const updatable = !!existing && !existing.rute;
+                      const updatable = !!existing && existing.status === "Kladd";
                       const blocked = !r.gyldig || (duplicate && !updatable);
                       return <tr key={`${r.maalepunkt_id}-${i}`}>
                         <td>
                           {updatable
-                            ? <input type="checkbox" checked={!!updateRows[i]} onChange={(e) => setUpdateRows((s) => ({ ...s, [i]: e.target.checked }))} title="Oppdater eksisterende Kladd med rute/vilkår/oppstart fra avtalen" />
+                            ? <input type="checkbox" checked={!!updateRows[i]} onChange={(e) => setUpdateRows((s) => ({ ...s, [i]: e.target.checked }))} title="Oppdater eksisterende Kladd med oppstart fra avtalen" />
                             : <input type="checkbox" checked={!!selectedRows[i]} disabled={blocked} onChange={(e) => setSelectedRows((s) => ({ ...s, [i]: e.target.checked }))} />}
                         </td>
                         <td>{r.adresse}</td><td className="num">{r.maalenummer}</td><td className="num">{r.maalepunkt_id}</td><td>{r.netteier}</td><td>{r.prisomrade}</td><td className="num">{fmt(r.aarsforbruk_kwh)}</td>
@@ -2448,7 +2494,7 @@ export default function StromflytPage() {
                   <div className="hd"><h2>Avtaleinformasjon per referanse</h2><span className="sub">Fyll bare det Excel-filen ikke inneholder</span></div>
                   <div className="tablewrap mapping-table">
                     <table>
-                      <thead><tr><th>Referanse / kunde</th><th>Org.nr</th><th>Selger</th><th>Strøm-org</th><th>Rute</th><th>Kommersielt</th><th>Signert</th><th>Kontroll</th></tr></thead>
+                      <thead><tr><th>Referanse / kunde</th><th>Org.nr</th><th>Selger</th><th>Strøm-org</th><th>Avtaletype</th><th>Signert</th><th>Kontroll</th></tr></thead>
                       <tbody>{excelGroupKeys.map((key) => {
                         const m = excelMappings[key];
                         if (!m) return null;
@@ -2457,8 +2503,7 @@ export default function StromflytPage() {
                           <td><input className="num compact-input" maxLength={9} placeholder="9 siffer" value={m.org_nr} onChange={(e) => setExcelMapping(key, { org_nr: e.target.value.replace(/\D/g, "") })} /></td>
                           <td><input className="compact-input" placeholder="ansvarlig selger" value={m.selger} onChange={(e) => setExcelMapping(key, { selger: e.target.value })} /></td>
                           <td><input list="excel-cloud-orgs" value={m.cloud_org} onChange={(e) => setExcelMapping(key, { cloud_org: e.target.value })} /><datalist id="excel-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist></td>
-                          <td><select value={m.rute} onChange={(e) => setExcelMapping(key, { rute: e.target.value as Rute | "", cloud_org: e.target.value === "B" && !m.cloud_org ? "Strømkunder" : m.cloud_org })}><option value="">velg</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option></select></td>
-                          <td>{m.rute === "A" ? <input className="num compact-input" placeholder="årspris kr" value={m.fast_aarspris} onChange={(e) => setExcelMapping(key, { fast_aarspris: e.target.value })} /> : <input className="num compact-input" placeholder="påslag øre/kWh" value={m.paslag_ore_kwh} onChange={(e) => setExcelMapping(key, { paslag_ore_kwh: e.target.value })} />}</td>
+                          <td><select value={m.avtaletype} onChange={(e) => setExcelMapping(key, { avtaletype: e.target.value as ExcelGroupConfig["avtaletype"] })}><option value="">velg</option><option value="Spotavtale">Spotavtale</option><option value="Eierskifte">Eierskifte</option></select></td>
                           <td><label className="checkline"><input type="checkbox" checked={m.signert} onChange={(e) => setExcelMapping(key, { signert: e.target.checked })} /> Ja</label></td>
                           <td>{excelMappingValid(m) ? <span className="pill s-aktiv">Klar</span> : <span className="pill s-klar">Mangler felt</span>}</td>
                         </tr>;
@@ -2545,7 +2590,7 @@ export default function StromflytPage() {
                       {(() => {
                         const count = fakturaKunde.trim() ? rows.filter((r) => r.kunde.trim().toLowerCase() === fakturaKunde.trim().toLowerCase()).length : 0;
                         return fakturaKunde.trim()
-                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før${count > 0 ? " - org.nr/Cloud-org/rute fylt inn automatisk under" : ""}.`
+                          ? `${count} målepunkt allerede registrert på ${fakturaKunde.trim()} fra før${count > 0 ? " - org.nr/Cloud-org fylt inn automatisk under" : ""}.`
                           : "Skriv inn eller velg fra listen - kjent kunde fyller resten ut automatisk.";
                       })()}
                     </span>
@@ -2560,18 +2605,6 @@ export default function StromflytPage() {
                     <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
                     <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
                     <span>Hvilken organisasjon i Adaptic Cloud målepunktene hører til - gjelder alle valgte rader under.</span>
-                  </div>
-                  <div className="import-org">
-                    <label>Rute <span className="muted" style={{ fontWeight: 400 }}>(valgfritt nå)</span></label>
-                    <select value={fakturaRute} onChange={(e) => setFakturaRute(e.target.value as Rute | "")}>
-                      <option value="">ikke avklart ennå</option><option value="A">A · leietaker</option><option value="B">B · strømsalg</option>
-                    </select>
-                    {fakturaRute === "A"
-                      ? <input className="num compact-input" placeholder="fast årspris kr" value={fakturaFastArspris} onChange={(e) => setFakturaFastArspris(e.target.value)} />
-                      : fakturaRute === "B"
-                        ? <input className="num compact-input" placeholder="påslag øre/kWh" value={fakturaPaslag} onChange={(e) => setFakturaPaslag(e.target.value)} />
-                        : <span />}
-                    <span>Står ikke på fakturaen, og trengs ikke for å lagre - legges til Kladd og kan fylles inn senere når avtalen er klar.</span>
                   </div>
                   <div className="import-org">
                     <label className="checkline"><input type="checkbox" checked={fakturaSignert} onChange={(e) => setFakturaSignert(e.target.checked)} /> Avtalen er signert</label>
@@ -2698,37 +2731,6 @@ export default function StromflytPage() {
                     {PRISOMRADER.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </Field>
-              </div>
-            </fieldset>
-
-            <fieldset className="wide">
-              <legend>Rute og kommersielt</legend>
-              <div className="radio-row">
-                {(["B", "A"] as Rute[]).map((rt) => (
-                  <label key={rt} className="radio-card" data-on={form.rute === rt} onClick={() => set("rute", rt)}>
-                    <input type="radio" name="rute" checked={form.rute === rt} readOnly />
-                    <b>{rt === "B" ? "Rute B · rent strømsalg" : "Rute A · leietakerfakturering"}</b>
-                    <span>{rt === "B" ? "Kunden er sluttbruker. Påslag øre/kWh." : "Adaptic fakturerer kundens leietakere. Fast årspris (ARR)."}</span>
-                  </label>
-                ))}
-              </div>
-              {errFor("rute") && <div className="err" style={{ marginTop: 8 }}>{errFor("rute")}</div>}
-              <div className="grid2" style={{ marginTop: 14 }}>
-                {form.rute === "B" && (
-                  <Field label="Påslag (øre/kWh)" req err={errFor("paslag_ore_kwh")}>
-                    <input className="num" inputMode="decimal" value={form.paslag_ore_kwh ?? ""} onChange={(e) => set("paslag_ore_kwh", (e.target.value === "" ? null : Number(e.target.value)) as any)} />
-                  </Field>
-                )}
-                {form.rute === "B" && (
-                  <Field label="Fast pr. måler / mnd (valgfritt)">
-                    <input className="num" inputMode="numeric" value={form.fast_pr_maaler ?? ""} onChange={(e) => set("fast_pr_maaler", (e.target.value === "" ? null : Number(e.target.value)) as any)} />
-                  </Field>
-                )}
-                {form.rute === "A" && (
-                  <Field label="Fast årspris leietakerfakturering (kr, valgfritt)" err={errFor("fast_aarspris")}>
-                    <input className="num" inputMode="numeric" value={form.fast_aarspris ?? ""} onChange={(e) => set("fast_aarspris", (e.target.value === "" ? null : Number(e.target.value)) as any)} />
-                  </Field>
-                )}
               </div>
             </fieldset>
 
@@ -3081,9 +3083,6 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-innmeldt,.pill.s-sendt{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .pill.s-klar{color:var(--sf-warn);background:var(--sf-warn-soft)}
 .pill.s-bekreftet,.pill.s-cloud,.pill.s-aktiv{color:var(--sf-good);background:var(--sf-good-soft)}
-.rute{font-family:var(--sf-mono);font-weight:640;font-size:12px;padding:2px 7px;border-radius:6px}
-.rute.A{color:var(--sf-accent);background:var(--sf-accent-soft)}
-.rute.B{color:var(--sf-good);background:var(--sf-good-soft)}
 .intake{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1040px}
 .edit-banner{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--sf-accent);background:var(--sf-accent-soft);color:var(--sf-accent);border-radius:9px}.edit-banner span{font-size:13px;color:var(--sf-ink-2)}
 .sf-root fieldset{grid-column:span 1;border:1px solid var(--sf-border);border-radius:10px;background:var(--sf-surface);padding:16px 18px 18px;margin:0}
@@ -3142,7 +3141,6 @@ td .muted{color:var(--sf-ink-3)}
 .sf-root th:last-child,.sf-root td:last-child{padding-right:18px}
 .sf-root tbody tr{transition:background .12s}
 .pill{padding:4px 10px;border:1px solid color-mix(in srgb,currentColor 20%,transparent)}
-.rute{padding:3px 8px;letter-spacing:.02em}
 .login-card{box-shadow:var(--sf-shadow-md),0 40px 90px rgba(16,32,45,.1)}
 .modal{box-shadow:0 30px 80px rgba(10,18,30,.4)}
 .action-select{font-weight:500;color:var(--sf-ink-2);border-color:var(--sf-border)}

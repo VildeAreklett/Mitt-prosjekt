@@ -1,8 +1,6 @@
 // Strømflyt: typer, konstanter og validering. Rammeverk-uavhengig.
 // Kanonisk kilde er workspaces/stromflyt/konfigurasjon/. Hold i synk med den.
 
-export type Rute = "A" | "B";
-
 export type Status =
   | "Kladd"
   | "Innmeldt"
@@ -84,10 +82,6 @@ export interface Malepunkt {
   aarsforbruk_kwh: number | null;
   avtalt_oppstart: string; // ISO date
   at_kode: string;
-  rute: Rute | "";
-  paslag_ore_kwh: number | null;
-  fast_pr_maaler: number | null;
-  fast_aarspris: number | null;
   signert: boolean;
   kommentar: string;
   // Overtas på eiers/leverandørens eksisterende vilkår (eierskifte), eller
@@ -117,7 +111,7 @@ export function previousStatus(s: Status): Status | null {
 // `draft: true` brukes når man lagrer endringer på en EKSISTERENDE rad (uansett
 // status) - da skal identitetsfeltene (kunde, org.nr, adresse, MålepunktID osv.)
 // fortsatt være påkrevd, men innmeldings-spesifikke felt (oppstartsdato,
-// referansekode, signert, rute/pris) kan stå tomme akkurat som når raden ble
+// referansekode, signert) kan stå tomme akkurat som når raden ble
 // opprettet som Kladd fra faktura/avtale-opplasting (jf. migration-004). Uten
 // dette unntaket kunne man ikke lagre en liten rettelse (f.eks. stave-feil i
 // adressen) på en Kladd-rad før ALLE innmeldingsfelt var fylt ut - endringen
@@ -147,30 +141,7 @@ export function validateMalepunkt(m: Partial<Malepunkt>, opts?: { draft?: boolea
   // AT-kode er ofte ikke klar med en gang (tildeles internt etter hvert) og
   // skal derfor aldri være obligatorisk - kan ettermeldes senere.
   if (!draft && !m.signert) e.signert = "Avtalen må være signert før innmelding.";
-
-  const ruteTomt = m.rute !== "A" && m.rute !== "B";
-  if (!(draft && ruteTomt)) {
-    if (ruteTomt) {
-      e.rute = "Velg rute A eller B.";
-    } else if (m.rute === "B") {
-      if (!/^[0-9]+([.,][0-9]+)?$/.test(String(m.paslag_ore_kwh ?? "").trim()))
-        e.paslag_ore_kwh = "Påslag i øre/kWh.";
-    } else if (m.rute === "A") {
-      // Valgfritt felt - fylles kun ut hvis man ønsker å registrere det nå.
-      // Valider formatet bare hvis noe faktisk er skrevet inn.
-      const fastArsprisTomt = !req(m.fast_aarspris);
-      if (!fastArsprisTomt && !/^[0-9]+$/.test(String(m.fast_aarspris ?? "").trim()))
-        e.fast_aarspris = "Fast årspris i kr.";
-    }
-  }
   return e;
-}
-
-export function kommersielt(m: Malepunkt): string {
-  if (m.rute === "A") return `Årspris ${fmt(m.fast_aarspris)} kr`;
-  let s = `${m.paslag_ore_kwh ?? "?"} øre/kWh`;
-  if (m.fast_pr_maaler && m.fast_pr_maaler > 0) s += ` + ${fmt(m.fast_pr_maaler)}/mnd`;
-  return s;
 }
 
 export function fmt(n: number | null | undefined): string {
@@ -190,6 +161,7 @@ export const ENTELIOS_COLUMNS: { key: keyof Malepunkt; label: string }[] = [
   { key: "netteier", label: "Netteier" },
   { key: "aarsforbruk_kwh", label: "Årsforbruk (kWh)" },
   { key: "avtalt_oppstart", label: "Oppstartdato" },
+  { key: "avtaletype", label: "Avtaletype" },
   { key: "kontaktperson_navn", label: "Kontaktperson" },
   { key: "kontaktperson_epost", label: "Kontakt e-post" },
   { key: "kommentar", label: "Kommentar" },

@@ -29,10 +29,6 @@ export interface ParsedRow {
 export interface ParsedAvtale {
   kunde: string | null;
   org_nr: string | null;
-  rute: "A" | "B" | null;
-  paslag_ore_kwh: number | null;
-  fast_pr_maaler: number | null;
-  fast_aarspris: number | null;
   avtalt_oppstart: string | null; // ISO yyyy-mm-dd
   doc_ref: string | null;
   avtale_signert: boolean;
@@ -48,19 +44,11 @@ export interface ParsedAvtale {
 const TOOL_NAME = "lagre_avtale_data";
 
 const EXTRACTION_PROMPT = `Dette er en signert Adaptic-strømavtale (PDF, "Strømavtale Adaptic Spot Næring"
-for rute B/rent strømsalg, eller en leietakerfaktureringsavtale for rute A).
-Les hele dokumentet, inkludert signatursertifikatet på siste side, og kall
-verktøyet ${TOOL_NAME} med feltene:
+eller en leietakerfaktureringsavtale). Les hele dokumentet, inkludert
+signatursertifikatet på siste side, og kall verktøyet ${TOOL_NAME} med feltene:
 
 - kunde: kundens firmanavn (selskapet på motsatt side av Adaptic Technology AS)
 - org_nr: kundens organisasjonsnummer, kun 9 siffer
-- rute: "B" hvis dette er en ren strømsalgsavtale ("Strømavtale", "Adaptic
-  Spot", "Strømleveranse"), "A" hvis dette er en leietakerfaktureringsavtale
-  (kunden fakturerer egne leietakere, avtalen har en byggliste i stedet for
-  en måler-tabell med MålepunktID). Bruk null hvis du er usikker.
-- paslag_ore_kwh: påslag i øre/kWh (kun rute B), tallverdi
-- fast_pr_maaler: månedlig fastbeløp per måler i kr (kun rute B, hvis oppgitt), tallverdi
-- fast_aarspris: total årspris for leietakerfakturering i kr (kun rute A), tallverdi
 - avtalt_oppstart: oppstartsdato for strømleveransen i format YYYY-MM-DD, slik
   den står under overskriften "Oppstart" (f.eks. "Oppstart av strømleveransen
   fra Adaptic Technology AS: 1.5.2026" -> "2026-05-01")
@@ -71,8 +59,7 @@ verktøyet ${TOOL_NAME} med feltene:
   PARTIES" og to fullførte SIGNED-tidsstempler). IKKE stol på en eventuell
   "Signert"-kolonne i selve anleggstabellen - den er ofte bare en mal-rest og
   reflekterer ikke faktisk signaturstatus.
-- rows: én rad per anlegg i "Anleggsopplysninger"-tabellen (gjelder rute B),
-  med feltene:
+- rows: én rad per anlegg i "Anleggsopplysninger"-tabellen, med feltene:
   - adresse: adressen for anlegget
   - maalenummer: målernummer
   - maalepunkt_id: MålepunktID/EAN - skal være nøyaktig 18 siffer. Hvis
@@ -84,7 +71,7 @@ verktøyet ${TOOL_NAME} med feltene:
   - aarsforbruk_kwh: årsforbruk i kWh, heltall
   - gyldig: true med mindre maalepunkt_id mangler (se over)
   - problem: kun satt hvis gyldig er false
-  Hvis avtalen er rute A (leietakerfakturering) og har byggliste i stedet for
+  Hvis avtalen har en byggliste (leietakerfakturering) i stedet for en
   målertabell, returner en tom rows-liste.
 - note: valgfri kort tekst KUN hvis du ikke fant noen anleggstabell i det hele
   tatt (f.eks. "Fant ingen målepunkt-tabell i avtalen. Sjekk at det er en
@@ -143,10 +130,6 @@ export async function parseAvtalePdf(bytes: Uint8Array): Promise<ParsedAvtale> {
           properties: {
             kunde: { type: ["string", "null"] },
             org_nr: { type: ["string", "null"] },
-            rute: { type: ["string", "null"], enum: ["A", "B", null] },
-            paslag_ore_kwh: { type: ["number", "null"] },
-            fast_pr_maaler: { type: ["number", "null"] },
-            fast_aarspris: { type: ["number", "null"] },
             avtalt_oppstart: { type: ["string", "null"] },
             doc_ref: { type: ["string", "null"] },
             avtale_signert: { type: "boolean" },
@@ -154,7 +137,7 @@ export async function parseAvtalePdf(bytes: Uint8Array): Promise<ParsedAvtale> {
             note: { type: ["string", "null"] },
             kommentar_forslag: { type: "string" },
           },
-          required: ["kunde", "org_nr", "rute", "avtale_signert", "rows", "kommentar_forslag"],
+          required: ["kunde", "org_nr", "avtale_signert", "rows", "kommentar_forslag"],
         },
       },
     ],
@@ -201,10 +184,6 @@ export async function parseAvtalePdf(bytes: Uint8Array): Promise<ParsedAvtale> {
   return {
     kunde: raw.kunde ? String(raw.kunde).trim() : null,
     org_nr: raw.org_nr ? String(raw.org_nr).replace(/\D/g, "").slice(0, 9) : null,
-    rute: raw.rute === "A" || raw.rute === "B" ? raw.rute : null,
-    paslag_ore_kwh: typeof raw.paslag_ore_kwh === "number" ? raw.paslag_ore_kwh : null,
-    fast_pr_maaler: typeof raw.fast_pr_maaler === "number" ? raw.fast_pr_maaler : null,
-    fast_aarspris: typeof raw.fast_aarspris === "number" ? raw.fast_aarspris : null,
     avtalt_oppstart: raw.avtalt_oppstart ? String(raw.avtalt_oppstart) : null,
     doc_ref: raw.doc_ref ? String(raw.doc_ref) : null,
     avtale_signert,

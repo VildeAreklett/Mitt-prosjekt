@@ -18,12 +18,13 @@ export interface ParsedExcelRow {
   oppstartdato: string;
   kommentar: string;
   signert: boolean | null;
-  paslag_ore_kwh: number | null;
   status_suggestion: "Innmeldt" | "Sendt Entelios";
-  // Fra en "Strømkunde/Leietakerfakturering"-kolonne (som i Entelios-
-  // innmeldingsmalen) - forslag til rute, ikke bindende. "" hvis fila ikke
-  // sier noe om det.
-  rute_hint: "A" | "B" | "";
+  // Fra Avtaletype-kolonnen (som i Entelios-innmeldingsmalen): "Adaptic
+  // Spotpris" der er det samme som vår "Spotavtale", og "Kundens avtale" er
+  // det samme som vår "Eierskifte" (kunden/eksisterende leverandør sine
+  // vilkår overtas, i stedet for en ny Adaptic-spotavtale). "" hvis fila ikke
+  // sier noe om det - se Malepunkt.avtaletype i stromflyt-config.ts.
+  avtaletype_hint: "Eierskifte" | "Spotavtale" | "";
   // "Kundens avtale" i en Avtaletype/Fakturamottaker-kolonne betyr kunden
   // har egen Entelios-avtale og Adaptic kun er fakturamottaker - IKKE en
   // vanlig Adaptic-avtale. Skal aldri importeres stille - se
@@ -60,9 +61,7 @@ type Field =
   | "oppstartdato"
   | "kommentar"
   | "signert"
-  | "paslag_ore_kwh"
   | "kunde"
-  | "rute_kilde"
   | "avtaletype_kilde";
 
 function plain(value: ExcelJS.CellValue): string {
@@ -113,11 +112,6 @@ function fieldFor(header: string): Field | null {
   // "Merknad" er samme fritekstfelt som "Kommentar" i andre maler.
   if (h.includes("kommentar") || h.includes("merknad")) return "kommentar";
   if (h === "signert") return "signert";
-  if (h.includes("antaltpaslag") || h.includes("antallpaslag") || h === "paslag") return "paslag_ore_kwh";
-  // "Strømkunde/Leietakerfakturering" (eller bare "Strømkunde" /
-  // "Leietakerfakturering") sier hvilken rute anlegget hører til - B for
-  // strømkunde (sluttbruker), A for leietakerfakturering.
-  if (h.includes("stromkunde") || h.includes("leietakerfakturering")) return "rute_kilde";
   // "Avtaletype" fanger opp verdien "Kundens avtale" (kunden har egen
   // Entelios-avtale, Adaptic er bare fakturamottaker) - skal ALDRI
   // importeres som en vanlig Adaptic-avtale uten videre. NB: ikke slå
@@ -219,9 +213,9 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
       // krever_manuell_avklaring over), og skal ikke drukne bak
       // "Mangler årsforbruk" e.l. i UI-et som bare viser problemer[0].
       if (krevManuellAvklaring) problemer.unshift("Kundens avtale - fakturamottaker, ikke standard Adaptic-avtale");
-      const rutehint = raw.rute_kilde || "";
-      const ruteHintVerdi: "A" | "B" | "" =
-        /leietakerfakturering/i.test(rutehint) ? "A" : /stromkunde/i.test(normalized(rutehint)) ? "B" : "";
+      const avtaletypeKilde = raw.avtaletype_kilde || "";
+      const avtaletypeHint: "Eierskifte" | "Spotavtale" | "" =
+        /spotpris/i.test(avtaletypeKilde) ? "Spotavtale" : krevManuellAvklaring ? "Eierskifte" : "";
       rows.push({
         source_row: r,
         referansekode: raw.referansekode || "",
@@ -240,9 +234,8 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
         oppstartdato: oppstart,
         kommentar: raw.kommentar || "",
         signert: signertRaw ? /^(ja|yes|true)$/i.test(signertRaw) : null,
-        paslag_ore_kwh: numberOrNull(raw.paslag_ore_kwh || ""),
         status_suggestion: bestilt ? "Sendt Entelios" : "Innmeldt",
-        rute_hint: ruteHintVerdi,
+        avtaletype_hint: avtaletypeHint,
         krever_manuell_avklaring: krevManuellAvklaring,
         gyldig: problemer.length === 0,
         problemer,
