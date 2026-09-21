@@ -1480,16 +1480,26 @@ export default function StromflytPage() {
     const targets = selectedRowsForBulk;
     if (!targets.length) return;
     let funnet = 0, ikkeFunnet = 0, feilet = 0;
+    // Uten dette forsvant selve FEILMELDINGEN sporløst - "2 feilet" alene
+    // sier ingenting om HVORFOR (feil cloud_org-navn? Cloud nede? tom
+    // organisasjon?), og gjorde det umulig å feilsøke fra grensesnittet.
+    const feilmeldinger: string[] = [];
     for (let i = 0; i < targets.length; i++) {
       const r = targets[i];
       flash("Systemene svarer", `Cloud-sjekk ${i + 1}/${targets.length}: ${r.bygg}`);
       const result = await sjekkEnMaalerICloud(r);
-      if (!result.ok) feilet += 1;
+      if (!result.ok) {
+        feilet += 1;
+        if (!feilmeldinger.includes(result.error)) feilmeldinger.push(result.error);
+      }
       else if (result.funnet) funnet += 1;
       else ikkeFunnet += 1;
     }
     await refresh();
-    flash(`Cloud-sjekk ferdig: ${funnet} funnet, ${ikkeFunnet} ikke funnet${feilet ? `, ${feilet} feilet` : ""}`);
+    flash(
+      `Cloud-sjekk ferdig: ${funnet} funnet, ${ikkeFunnet} ikke funnet${feilet ? `, ${feilet} feilet` : ""}`,
+      feilmeldinger.length ? feilmeldinger.slice(0, 2).join(" | ") : undefined,
+    );
   }
 
   async function showHistory(r: Malepunkt) {
@@ -3148,7 +3158,7 @@ const CSS = `
    linjer flyter utenfor knappen og ser ut som et underpunkt av raden over -
    sett i praksis med "Bekreftet · klar for Cloud". Ett-linjes tekst med
    avkorting løser det uansett hvor lang etiketten senere blir. */
-.sidenav button span:not(.sidenav-tall){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.sidenav button span:not(.sidenav-tall){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;text-align:left}
 .sidenav-ikon{flex:none;color:#93a5ba}
 .sidenav button.active .sidenav-ikon{color:var(--sf-accent)}
 .sidenav button:hover{background:rgba(255,255,255,.08);color:#fff}
