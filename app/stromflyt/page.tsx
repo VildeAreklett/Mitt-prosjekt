@@ -27,6 +27,7 @@ import {
   updateStatus,
   updateStatuses,
   updateAvtaletype,
+  updateCloudOrg,
   updateMalepunktDetails,
   updateCustomerSeller,
   updateCustomerKontaktperson,
@@ -184,6 +185,7 @@ export default function StromflytPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [fltStatus, setFltStatus] = useState("");
+  const [bulkCloudOrg, setBulkCloudOrg] = useState("");
   const [workFilter, setWorkFilter] = useState<WorkFilter>("");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("arbeidsrekkefolge");
@@ -1557,6 +1559,21 @@ export default function StromflytPage() {
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
 
+  // Retter opp cloud_org i etterkant på flere rader samtidig - typisk rett
+  // etter en bulkimport (Excel/Kladd) der feltet bevisst ble stått åpent.
+  // "Sjekk i Cloud" finner ingenting uten et cloud_org å søke i - tomt felt,
+  // ikke feil i selve Cloud-oppslaget, er den vanlige årsaken til at en hel
+  // bunke rader kommer tilbake som "ikke funnet".
+  async function setSelectedCloudOrg(cloudOrg: string) {
+    const ids = selectedRowsForBulk.map((r) => r.id);
+    if (!ids.length || !cloudOrg.trim()) return;
+    try {
+      await updateCloudOrg(ids, cloudOrg.trim());
+      await refresh();
+      flash(`${ids.length} målepunkt satt til strøm-org «${cloudOrg.trim()}»`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
   // Samme regel som enkeltrad-slett: kun det som ikke er sendt til Entelios
   // ennå kan fjernes - unngår at noen ved et uhell slår sammen dette med
   // sletting av noe som allerede er ute av huset.
@@ -2402,6 +2419,17 @@ export default function StromflytPage() {
               <span className="grow" />
               <button className="btn sm" onClick={() => setSelectedAvtaletype("Eierskifte")}>Sett {selectedRowsForBulk.length} som Eierskifte</button>
               <button className="btn sm" onClick={() => setSelectedAvtaletype("Spotavtale")}>Sett {selectedRowsForBulk.length} som Spotavtale</button>
+              <input
+                list="cloud-org-list-bulk"
+                className="compact-input"
+                style={{ width: 140 }}
+                placeholder="strøm-org"
+                value={bulkCloudOrg}
+                onChange={(e) => setBulkCloudOrg(e.target.value)}
+                title="Nødvendig for at «Sjekk i Cloud» skal vite hvilken organisasjon den skal lete i"
+              />
+              <datalist id="cloud-org-list-bulk">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+              <button className="btn sm" disabled={!bulkCloudOrg.trim()} onClick={() => setSelectedCloudOrg(bulkCloudOrg)}>Sett {selectedRowsForBulk.length} sin strøm-org</button>
               <button className="btn sm" onClick={sjekkFlereICloud}>Sjekk {selectedRowsForBulk.length} i Cloud</button>
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>

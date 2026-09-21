@@ -83,6 +83,20 @@ export async function updateAvtaletype(ids: string[], avtaletype: Malepunkt["avt
   if (error) throw error;
 }
 
+// Setter strøm-org (cloud_org) på flere målepunkt samtidig - typisk brukt
+// rett etter en bulkimport der feltet bevisst ble stått åpent (se
+// excelMappingValid i stromflyt/page.tsx), for å rette det opp uten å måtte
+// redigere hver rad enkeltvis. "Sjekk i Cloud" finner ingenting uten dette -
+// det er tomt cloud_org, ikke feil i selve oppslaget, som gir "ikke funnet".
+export async function updateCloudOrg(ids: string[], cloudOrg: string): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from(TABLE)
+    .update({ cloud_org: cloudOrg })
+    .in("id", ids);
+  if (error) throw error;
+}
+
 export async function updateMalepunktDetails(
   id: string,
   patch: Partial<Omit<Malepunkt, "id" | "created_at" | "updated_at">>,
