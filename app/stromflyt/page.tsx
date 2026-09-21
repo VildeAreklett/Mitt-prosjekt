@@ -2163,7 +2163,8 @@ export default function StromflytPage() {
               );
             })}
             <div className="sidenav-fot">
-              Registeret erstatter strømavtale-Excel-arket. Fram til Entelios-integrasjonen er på plass sendes bestillinger på mail.
+              <span className="sidenav-status-dot" aria-hidden="true" />
+              <span>{loading ? "Henter register …" : sistOppdatert ? `Oppdatert ${sistOppdatert.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" })}` : "Ikke oppdatert ennå"}</span>
             </div>
           </nav>
 
@@ -2394,7 +2395,7 @@ export default function StromflytPage() {
               <Tile k="Ikke meldt inn" v={String(tiles.trenger)} sub="uansett status - før sending til Entelios" alert={tiles.trenger > 0} />
               <Tile
                 k="Eierskifte / Spotavtale"
-                v={`${tiles.eierskifte} / ${tiles.spotavtale}`}
+                v={<><span className="tile-v-num">{tiles.spotavtale}</span><span className="tile-v-unit"> spot</span><span className="tile-v-sep"> · </span><span className="tile-v-num">{tiles.eierskifte}</span><span className="tile-v-unit"> eierskifte</span></>}
                 sub={`${tiles.ikkeAvklart} ikke avklart ennå`}
                 alert={tiles.ikkeAvklart > 0}
                 bar={tiles.total > 0 ? (
@@ -3113,7 +3114,7 @@ export default function StromflytPage() {
   );
 }
 
-function Tile({ k, v, sub, alert, bar }: { k: string; v: string; sub?: string; alert?: boolean; bar?: ReactNode }) {
+function Tile({ k, v, sub, alert, bar }: { k: string; v: ReactNode; sub?: string; alert?: boolean; bar?: ReactNode }) {
   return (
     <div className={"tile" + (alert ? " alert" : "")}>
       <div className="k">{k}</div>
@@ -3200,7 +3201,8 @@ const CSS = `
 .sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe4ec;border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
 .sidenav button.active .sidenav-tall{background:var(--sf-accent);color:var(--sf-accent-ink)}
 .sidenav-tall.varsel{background:var(--sf-warn-soft);color:var(--sf-warn)}
-.sidenav-fot{margin-top:auto;color:#93a5ba;font-size:11.5px;line-height:1.45;padding:14px 10px 0;border-top:1px solid rgba(255,255,255,.1)}
+.sidenav-fot{margin-top:auto;display:flex;align-items:center;gap:8px;color:#93a5ba;font-size:11.5px;font-weight:550;padding:12px 10px;border-top:1px solid rgba(255,255,255,.1)}
+.sidenav-status-dot{width:7px;height:7px;border-radius:50%;background:var(--sf-good);flex:none;animation:toast-puls 1.8s ease-in-out infinite}
 .content-shell{width:100%;min-width:0;padding:26px 28px 80px}
 .profile-menu-wrap{position:relative}.profile-trigger{font:inherit;display:flex;align-items:center;gap:8px;padding:4px 9px 4px 5px;border:1px solid var(--sf-border-strong);border-radius:9px;background:var(--sf-surface);color:var(--sf-ink);font-size:13px;font-weight:570;cursor:pointer}.profile-trigger:hover,.profile-trigger[aria-expanded=true]{border-color:var(--sf-accent);background:var(--sf-accent-soft)}.profile-avatar{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--sf-accent);color:var(--sf-accent-ink);font-size:12px;font-weight:700}.profile-chevron{color:var(--sf-ink-3);font-size:14px}.profile-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:30;width:240px;padding:7px;background:var(--sf-surface);border:1px solid var(--sf-border);border-radius:11px;box-shadow:0 14px 40px rgba(15,25,45,.14)}.profile-identity{padding:9px 10px 12px;border-bottom:1px solid var(--sf-border);margin-bottom:5px}.profile-identity span,.profile-identity small{display:block;color:var(--sf-ink-3);font-size:11.5px}.profile-identity b{display:block;margin:2px 0 1px;font-size:14px}.profile-menu>button{font:inherit;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:var(--sf-ink);text-align:left;font-size:13px;cursor:pointer}.profile-menu>button:hover{background:var(--sf-surface-2)}.profile-menu>button.profile-logout{color:var(--sf-crit)}
 main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
@@ -3258,6 +3260,9 @@ tr.ny-avtale-drag-over{outline:2px dashed var(--sf-accent);outline-offset:-2px;b
 .tile:first-child{border-left:0}
 .tile .k{font-size:12px;color:var(--sf-ink-3);letter-spacing:.03em;text-transform:uppercase}
 .tile .v{font-size:27px;font-weight:680;letter-spacing:-.02em;margin-top:3px}
+.tile-v-num{font-size:1em}
+.tile-v-unit{font-size:.42em;font-weight:600;color:var(--sf-ink-3);letter-spacing:0}
+.tile-v-sep{font-size:.6em;color:var(--sf-ink-3);padding:0 1px}
 .tile-sub{display:block;font-size:12.5px;font-weight:500;color:var(--sf-ink-3);margin-top:4px;line-height:1.4}
 .tile.alert .v{color:var(--sf-warn)}
 .tile-bar{display:flex;height:5px;border-radius:999px;overflow:hidden;background:var(--sf-surface-2);margin-top:10px}
