@@ -1348,6 +1348,10 @@ export default function StromflytPage() {
       const detaljer: Partial<Malepunkt> = {};
       if (data.tsdb_id && data.tsdb_id !== r.tsdb_id) detaljer.tsdb_id = data.tsdb_id;
       if (data.cloud_metric_id && data.cloud_metric_id !== r.cloud_metric_id) detaljer.cloud_metric_id = data.cloud_metric_id;
+      // Målenummer blokkerer ikke lenger innmelding fra Excel (se
+      // excel-parser.ts) - fylles inn her i etterkant når Cloud faktisk vet
+      // det, samme prinsipp som tsdb_id/cloud_metric_id over.
+      if (data.malenummer && !r.maalenummer.trim()) detaljer.maalenummer = data.malenummer;
       if (Object.keys(detaljer).length > 0) await updateMalepunktDetails(r.id, detaljer);
       return {
         ok: true,

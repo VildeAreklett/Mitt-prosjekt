@@ -198,7 +198,10 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
       const problemer: string[] = [];
       if (!adresse) problemer.push("Mangler adresse");
       if (!/^\d{18}$/.test(maalepunktId)) problemer.push("MålepunktID må være 18 siffer");
-      if (!maalenummer) problemer.push("Mangler målenummer");
+      // Målenummer er IKKE en blokkerende mangel: MålepunktID er den unike,
+      // pålitelige identifikatoren. Målenummer hentes ofte automatisk etterpå
+      // via "Sjekk i Cloud" (se sjekkEnMaalerICloud i stromflyt/page.tsx) -
+      // å kreve det her ville blokkert import av ellers helt gyldige rader.
       if (!/^NO[1-5]$/.test(prisomrade)) problemer.push("Mangler/ugyldig prisområde");
       if (!(raw.netteier || "").trim()) problemer.push("Mangler netteier");
       if (aarsforbruk == null) problemer.push("Mangler årsforbruk");
