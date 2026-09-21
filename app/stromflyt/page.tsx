@@ -1424,11 +1424,24 @@ export default function StromflytPage() {
       // Cloud, ALDRI bakover - en rad som allerede er lenger fremme i egen
       // oppfølging (f.eks. manuelt satt til Aktiv) skal ikke reverseres bare
       // fordi datatilkoblingen ikke kunne bekreftes her.
+      //
+      // MEN: dette gjelder BARE rader som allerede er meldt inn og bekreftet
+      // av Entelios (status >= Bekreftet). En rad som fremdeles står på
+      // Kladd/Innmeldt/Klar for bestilling/Sendt Entelios er IKKE meldt inn
+      // ennå - at måleren tilfeldigvis allerede har data i Cloud (fra en helt
+      // annen sammenheng) er ingen grunn til å hoppe forbi selve
+      // innmeldingssteget. Det var nettopp denne bug'en som sendte
+      // Nesttun Invest-målere rett i "Satt opp i Cloud"/"Aktiv" uten at de
+      // noensinne var meldt inn til Entelios (sept. 2026) - se
+      // sql/audit-2026-09-21-hoppet-over-bekreftet.sql for opprydding.
       const foreslatt = data.foreslatt_status as Status | undefined;
+      const alleredeMeldtInn = STAGES.indexOf(r.status) >= STAGES.indexOf("Bekreftet");
       let statusMelding = "";
-      if (foreslatt && STAGES.indexOf(foreslatt) > STAGES.indexOf(r.status)) {
+      if (foreslatt && alleredeMeldtInn && STAGES.indexOf(foreslatt) > STAGES.indexOf(r.status)) {
         await updateStatus(r.id, foreslatt);
         statusMelding = ` → satt til «${displayStatus(foreslatt)}»`;
+      } else if (foreslatt && !alleredeMeldtInn && STAGES.indexOf(foreslatt) > STAGES.indexOf(r.status)) {
+        statusMelding = ` (Cloud viser «${displayStatus(foreslatt)}», men må meldes inn til Entelios først - status ikke endret)`;
       }
       // Lagre tsdb_id permanent på raden, ikke bare vise den i en toast - så
       // den kan tas ut i Excel og sendes videre til Entelios på historiske

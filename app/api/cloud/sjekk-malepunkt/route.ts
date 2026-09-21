@@ -46,5 +46,26 @@ export async function GET(req: Request) {
     }
   }
 
+  // Treffet kom via bygningsnavn, ikke en eksakt MålepunktID-match - vi vet
+  // det ER riktig BYGG, men IKKE sikkert at det er akkurat DENNE måleren.
+  // Da skal kun forbruksestimatet brukes (det stemmer uansett for hele
+  // bygget via hovedmåleren) - IKKE binde tsdb_id/målenummer/status til
+  // raden, det kunne koblet feil måleridentitet til feil MålepunktID.
+  if (result.funnet && !result.sikkerIdentitet) {
+    return NextResponse.json({
+      ok: true,
+      funnet: true,
+      bygg: result.bygg,
+      adresse: result.adresse,
+      malenummer: null,
+      tsdb_id: null,
+      cloud_metric_id: null,
+      hovedmaaler: result.hovedmaaler,
+      foreslatt_status: null,
+      metode: result.metode,
+      estimert_aarsforbruk_kwh,
+    });
+  }
+
   return NextResponse.json({ ...result, estimert_aarsforbruk_kwh });
 }

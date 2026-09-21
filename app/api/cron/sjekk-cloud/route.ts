@@ -81,11 +81,23 @@ export async function GET(req: Request) {
 
     const patch: Record<string, unknown> = {};
     const naavarendeStatus = rad.status as Status;
-    if (STAGES.indexOf(result.foreslatt_status) > STAGES.indexOf(naavarendeStatus)) {
+    // Skal ALDRI hoppe forbi selve innmeldingssteget: en rad som ikke
+    // engang er meldt inn til Entelios ennå (status < Bekreftet) skal
+    // forbli der uansett hva Cloud sier - at måleren tilfeldigvis allerede
+    // har data der (fra en helt annen sammenheng) er ingen bekreftelse på
+    // at DENNE avtalen faktisk er registrert. Se sikkerIdentitet-merknaden i
+    // lib/cloud-lookup.ts og sql/audit-2026-09-21-hoppet-over-bekreftet.sql
+    // for rader som ble feilaktig hoppet forbi før denne rettelsen.
+    const alleredeMeldtInn = STAGES.indexOf(naavarendeStatus) >= STAGES.indexOf("Bekreftet");
+    if (alleredeMeldtInn && result.foreslatt_status && STAGES.indexOf(result.foreslatt_status) > STAGES.indexOf(naavarendeStatus)) {
       patch.status = result.foreslatt_status;
       oppdatertStatus += 1;
     }
-    if (result.tsdb_id && result.tsdb_id !== rad.tsdb_id) {
+    // Treffet kom via bygningsnavn, ikke en eksakt MålepunktID-match - vi vet
+    // det ER riktig bygg, men ikke sikkert at det er akkurat DENNE måleren.
+    // Ikke bind tsdb_id fra et usikkert treff (se sikkerIdentitet i
+    // lib/cloud-lookup.ts).
+    if (result.sikkerIdentitet && result.tsdb_id && result.tsdb_id !== rad.tsdb_id) {
       patch.tsdb_id = result.tsdb_id;
       oppdatertTsdbId += 1;
     }

@@ -63,6 +63,13 @@ export type CloudLookupResult =
       hovedmaaler: boolean;
       foreslatt_status: "Aktiv" | "Satt opp i Cloud";
       metode: string;
+      // false når treffet kom via bygningsnavn-fallback, ikke en eksakt
+      // MålepunktID-match - da vet vi det ER et bygg med samme navn, men
+      // IKKE sikkert at det er akkurat DENNE måleren. Brukes til å avgjøre
+      // om tsdb_id/målenummer/status trygt kan bindes til raden, eller om
+      // treffet bare skal brukes til et forbruksestimat (se
+      // sjekk-malepunkt/route.ts og sjekkEnMaalerICloud).
+      sikkerIdentitet: boolean;
     }
   | { ok: false; error: string };
 
@@ -218,11 +225,13 @@ export async function slaOppMalepunktICloud(
       return { ok: false, error: "Ingen av metodene ble godkjent av Adaptic Cloud. Detaljer: " + diagnostikk.join(" | ") };
     }
 
-    // Fallback på bygningsnavn - kun når MålepunktID ikke ga treff. Krever
-    // et ENTYDIG treff (nøyaktig én måler i den organisasjonen med samme
-    // normaliserte byggnavn) - et bygg med flere målere (typisk flere
-    // leietakere/anlegg) skal ALDRI gjettes blindt, det ville kunnet koble
-    // feil måler til feil MålepunktID.
+    // Fallback på bygningsnavn - kun når MålepunktID ikke ga treff. Et bygg
+    // med flere målere (typisk flere leietakere/anlegg) skal ALDRI gjettes
+    // blindt mellom submålere - men HOVEDMÅLEREN er alltid entydig (det
+    // finnes bare én pr. bygg), og gir uansett et riktig forbruksestimat for
+    // hele bygget. sikkerIdentitet=false på dette treffet, uansett - vi vet
+    // det ER bygget, IKKE sikkert at det er akkurat DENNE MålepunktID-en.
+    let viaByggnavn = false;
     if (!treff && byggNavn?.trim()) {
       const target = normalizeByggnavn(byggNavn);
       if (target) {
@@ -230,9 +239,18 @@ export async function slaOppMalepunktICloud(
         if (kandidater.length === 1) {
           treff = kandidater[0];
           brukteMetode = "bygningsnavn (MålepunktID stemte ikke)";
+          viaByggnavn = true;
           diagnostikk.push(`bygningsnavn-fallback: 1 entydig treff på «${byggNavn}»`);
         } else if (kandidater.length > 1) {
-          diagnostikk.push(`bygningsnavn-fallback: ${kandidater.length} målere deler byggnavn «${byggNavn}» - for usikkert å velge automatisk`);
+          const hovedmaalere = kandidater.filter((m) => m.mainImported);
+          if (hovedmaalere.length === 1) {
+            treff = hovedmaalere[0];
+            brukteMetode = "bygningsnavn + hovedmåler (flere målere i bygget, MålepunktID stemte ikke)";
+            viaByggnavn = true;
+            diagnostikk.push(`bygningsnavn-fallback: ${kandidater.length} målere deler byggnavn «${byggNavn}», brukte den entydige hovedmåleren for forbruksestimat`);
+          } else {
+            diagnostikk.push(`bygningsnavn-fallback: ${kandidater.length} målere deler byggnavn «${byggNavn}» (${hovedmaalere.length} hovedmålere) - for usikkert å velge automatisk`);
+          }
         } else {
           diagnostikk.push(`bygningsnavn-fallback: ingen målere med byggnavn «${byggNavn}»`);
         }
@@ -258,6 +276,7 @@ export async function slaOppMalepunktICloud(
       hovedmaaler: !!treff.mainImported,
       foreslatt_status: iDrift ? "Aktiv" : "Satt opp i Cloud",
       metode: brukteMetode,
+      sikkerIdentitet: !viaByggnavn,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "ukjent feil";
