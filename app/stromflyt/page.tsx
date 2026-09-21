@@ -1350,11 +1350,20 @@ export default function StromflytPage() {
       // excel-parser.ts) - fylles inn her i etterkant når Cloud faktisk vet
       // det, samme prinsipp som tsdb_id/cloud_metric_id over.
       if (data.malenummer && !r.maalenummer.trim()) detaljer.maalenummer = data.malenummer;
+      // Årsforbruk mangler heller ikke sjelden fra kilden (Entelios sin egen
+      // innmeldingsmal har ingen slik kolonne) - er måleren allerede i drift
+      // i Cloud, bruk faktiske måledata som et estimat i stedet for å la
+      // feltet stå tomt til noen finner det manuelt.
+      let forbrukMelding = "";
+      if (data.estimert_aarsforbruk_kwh && r.aarsforbruk_kwh == null) {
+        detaljer.aarsforbruk_kwh = data.estimert_aarsforbruk_kwh;
+        forbrukMelding = `, estimert årsforbruk ${fmt(data.estimert_aarsforbruk_kwh)} kWh`;
+      }
       if (Object.keys(detaljer).length > 0) await updateMalepunktDetails(r.id, detaljer);
       return {
         ok: true,
         funnet: true,
-        melding: `funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}`,
+        melding: `funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}${forbrukMelding}`,
       };
     } catch (e: any) {
       return { ok: false, error: e.message ?? String(e) };

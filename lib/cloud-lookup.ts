@@ -305,3 +305,36 @@ export async function hentMaanedsforbruk(
   }
   return { ok: true, perMonthKwh };
 }
+
+// Estimert årsforbruk for ETT enkelt målepunkt som allerede er koblet opp i
+// Cloud (mainImported + tsdb_id), brukt til å fylle inn "Årsforbruk"
+// automatisk ved "Sjekk i Cloud" når feltet mangler fra kilden - f.eks. en
+// Entelios-innmeldingsmal uten årsforbruk-kolonne i det hele tatt (se
+// excel-parser.ts). Siste 365 dager (rullerende), ikke kalenderår - måleren
+// kan ha vært i drift lenge før den ble meldt inn her, og et rent
+// kalenderår ville gitt et kunstig lavt tall tidlig på året.
+export async function hentEstimertAarsforbruk(
+  token: string,
+  metricId: string,
+): Promise<{ ok: true; kwh: number } | { ok: false; error: string }> {
+  const now = new Date();
+  const from = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
+  const to = now.toISOString();
+  const qs = new URLSearchParams({ from, to, resolution: "MONTH", rollup: "SUM", padding: "true" });
+  const res = await fetch(`${CLOUD_API_BASE}/v1/metrics/data?${qs.toString()}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify([metricId]),
+    cache: "no-store",
+  });
+  if (!res.ok) return { ok: false, error: `/v1/metrics/data avvist (HTTP ${res.status})` };
+  const body = (await res.json().catch(() => null)) as Record<string, TimeseriesPoint[]> | null;
+  if (!body) return { ok: false, error: "Uventet svar fra /v1/metrics/data" };
+
+  let kwh = 0;
+  for (const points of Object.values(body)) {
+    if (!Array.isArray(points)) continue;
+    for (const p of points) if (typeof p?.value === "number") kwh += p.value;
+  }
+  return { ok: true, kwh: Math.round(kwh) };
+}

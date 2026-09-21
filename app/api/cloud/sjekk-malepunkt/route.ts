@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireStromflytAccess } from "../../../../lib/server-auth";
-import { slaOppMalepunktICloud } from "../../../../lib/cloud-lookup";
+import { slaOppMalepunktICloud, hentTokenForOrg, hentEstimertAarsforbruk } from "../../../../lib/cloud-lookup";
 
 // Interaktiv "Sjekk i Cloud"-knapp for én rad. Selve oppslagslogikken ligger
 // i lib/cloud-lookup.ts, delt med den daglige automatiske jobben
@@ -28,5 +28,22 @@ export async function GET(req: Request) {
   if (!result.ok) {
     return NextResponse.json(result, { status: 502 });
   }
-  return NextResponse.json(result);
+
+  // Best-effort: prøv å hente et estimert årsforbruk fra faktiske måledata
+  // når måleren først er funnet - feiler dette (f.eks. ingen data ennå),
+  // skal ikke selve Cloud-oppslaget rammes. Se hentEstimertAarsforbruk.
+  let estimert_aarsforbruk_kwh: number | null = null;
+  if (result.funnet) {
+    try {
+      const tokenRes = await hentTokenForOrg(cloudOrgName);
+      if (tokenRes.ok) {
+        const forbrukRes = await hentEstimertAarsforbruk(tokenRes.token, result.cloud_metric_id);
+        if (forbrukRes.ok && forbrukRes.kwh > 0) estimert_aarsforbruk_kwh = forbrukRes.kwh;
+      }
+    } catch {
+      // Ignorer - årsforbruk er en bonus her, ikke en forutsetning.
+    }
+  }
+
+  return NextResponse.json({ ...result, estimert_aarsforbruk_kwh });
 }
