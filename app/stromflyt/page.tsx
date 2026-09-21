@@ -1101,8 +1101,14 @@ export default function StromflytPage() {
     });
   }
 
+  // Selger/strøm-org/avtaletype/signert er IKKE blokkerende for selve
+  // importen - kunde og org.nr er de eneste feltene databasen faktisk krever
+  // (org_nr har en formatsjekk, resten kan ettermeldes fra Arbeidsliste når
+  // avtalen er klar). Å kreve alt her ville tvunget selgeren gjennom en hel
+  // runde med kommersielle detaljer bare for å få adressen/MålepunktID-en
+  // inn i registeret.
   function excelMappingValid(m: ExcelGroupConfig | undefined) {
-    return !!m && !!m.kunde.trim() && /^\d{9}$/.test(m.org_nr) && !!m.cloud_org.trim() && !!m.avtaletype && m.signert;
+    return !!m && !!m.kunde.trim() && /^\d{9}$/.test(m.org_nr);
   }
 
   async function importExcelRows() {
@@ -1754,7 +1760,7 @@ export default function StromflytPage() {
       { label: "Status", value: (a) => a.status },
       { label: "Avtale", value: (a) => a.avtalenavn },
       { label: "Kunde", value: (a) => a.kunde },
-      { label: "AT-nummer", value: (a) => a.at_nummer },
+      { label: "AT-kode", value: (a) => a.at_nummer },
       { label: "Signert", value: (a) => a.signert_dato ?? "" },
       { label: "Beløp", value: (a) => a.belop ?? "" },
       { label: "PandaDoc", value: (a) => a.pandadoc_url },
@@ -2059,20 +2065,26 @@ export default function StromflytPage() {
                                 onBlur={(e) => { if (e.target.value !== a.avtalenavn) lagreFelt({ avtalenavn: e.target.value }); }}
                               />
                               <div className="ny-avtale-rad2">
-                                <input
-                                  key={a.id + "-kunde"}
-                                  placeholder="Kunde"
-                                  defaultValue={a.kunde}
-                                  disabled={ferdig}
-                                  onBlur={(e) => { if (e.target.value !== a.kunde) lagreFelt({ kunde: e.target.value }); }}
-                                />
-                                <input
-                                  key={a.id + "-at"}
-                                  placeholder="AT-nummer"
-                                  defaultValue={a.at_nummer}
-                                  disabled={ferdig}
-                                  onBlur={(e) => { if (e.target.value !== a.at_nummer) lagreFelt({ at_nummer: e.target.value }); }}
-                                />
+                                <label className="ny-avtale-felt">
+                                  <span className="ny-avtale-label">Kunde</span>
+                                  <input
+                                    key={a.id + "-kunde"}
+                                    placeholder="Ikke satt"
+                                    defaultValue={a.kunde}
+                                    disabled={ferdig}
+                                    onBlur={(e) => { if (e.target.value !== a.kunde) lagreFelt({ kunde: e.target.value }); }}
+                                  />
+                                </label>
+                                <label className="ny-avtale-felt">
+                                  <span className="ny-avtale-label">AT-kode</span>
+                                  <input
+                                    key={a.id + "-at"}
+                                    placeholder="Ikke satt"
+                                    defaultValue={a.at_nummer}
+                                    disabled={ferdig}
+                                    onBlur={(e) => { if (e.target.value !== a.at_nummer) lagreFelt({ at_nummer: e.target.value }); }}
+                                  />
+                                </label>
                               </div>
                               <input
                                 key={a.id + "-kommentar"}
@@ -2603,8 +2615,8 @@ export default function StromflytPage() {
                           <td><div className="muted num">{key}</div><input value={m.kunde} onChange={(e) => setExcelMapping(key, { kunde: e.target.value })} /></td>
                           <td>
                             <input className="num compact-input" maxLength={9} placeholder="9 siffer" value={m.org_nr} onChange={(e) => setExcelMapping(key, { org_nr: e.target.value.replace(/\D/g, "") })} />
-                            {excelOrgSokMsg[key] && <div className="muted" style={{ fontSize: 11 }}>{excelOrgSokMsg[key]}</div>}
-                            {excelOrgSokTreff[key]?.map((tr) => (
+                            {!/^\d{9}$/.test(m.org_nr) && excelOrgSokMsg[key] && <div className="muted" style={{ fontSize: 11 }}>{excelOrgSokMsg[key]}</div>}
+                            {!/^\d{9}$/.test(m.org_nr) && excelOrgSokTreff[key]?.map((tr) => (
                               <button key={tr.organisasjonsnummer} type="button" className="btn sm" style={{ display: "block", marginTop: 4 }} onClick={() => { setExcelMapping(key, { org_nr: tr.organisasjonsnummer }); setExcelOrgSokMsg((m2) => ({ ...m2, [key]: "" })); }}>
                                 {tr.navn} · {tr.organisasjonsnummer}
                               </button>
@@ -3092,6 +3104,8 @@ main{width:100%;max-width:none;margin:0;padding:26px clamp(16px,2vw,40px) 80px}
 .ny-avtale-navn{font-weight:620}
 .ny-avtale-rad2{display:flex;gap:8px}
 .ny-avtale-rad2 input{font-size:12.5px;color:var(--sf-ink-3)}
+.ny-avtale-felt{flex:1;min-width:0}
+.ny-avtale-label{display:block;font-size:10.5px;font-weight:620;letter-spacing:.03em;color:var(--sf-ink-3);text-transform:uppercase;margin-bottom:1px}
 .ny-avtale-edit>input[placeholder="Kommentar"]{font-size:12.5px;color:var(--sf-ink-3)}
 .ny-avtale-belop{text-align:right;width:100%}
 .sf-root .ny-avtale-dato{font:inherit;font-family:var(--sf-mono);border:1px solid transparent;background:transparent;border-radius:6px;padding:3px 6px;width:100%;color-scheme:light}
