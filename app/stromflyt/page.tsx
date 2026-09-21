@@ -1968,15 +1968,18 @@ export default function StromflytPage() {
           <nav className="sidenav" aria-label="Hovedmeny">
             <div className="sidenav-merke">ARBEIDSFLATE</div>
             <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+              <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></svg>
               <span>Oversikt</span>
             </button>
             <button className={tab === "reg" && workFilter === "" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(""); setFltStatus(""); }}>
+              <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
               <span>Arbeidsliste</span>
             </button>
             {/* Nye avtaler kommer automatisk fra fakturakontroll når en ren
                 strømleveranse blir signert. De har ingen målepunkter ennå, og
                 står derfor foran resten av løpet. */}
             <button className={tab === "nye" ? "active" : ""} onClick={() => setTab("nye")}>
+              <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
               <span>Nye avtaler</span>
               {nyeAvtaler.filter((a) => a.status === "Ny" || a.status === "Under arbeid").length > 0 && (
                 <span className="sidenav-tall varsel">
@@ -1988,12 +1991,14 @@ export default function StromflytPage() {
                 opp strømfaktura og får målepunktene hentet ut som Kladd,
                 lenge før noe sendes til Entelios. */}
             <button className={tab === "reg" && workFilter === "kladd" ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter("kladd"); setFltStatus(""); }}>
+              <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
               <span>Kladd</span>
               {rows.filter((r) => r.status === "Kladd").length > 0 && (
                 <span className="sidenav-tall">{rows.filter((r) => r.status === "Kladd").length}</span>
               )}
             </button>
             <button className={tab === "form" ? "active" : ""} onClick={newManualEntry}>
+              <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg>
               <span>Registrering</span>
             </button>
             <div className="sidenav-merke">STATUSKØER</div>
@@ -2093,7 +2098,7 @@ export default function StromflytPage() {
                           }}
                         >
                           <td><span className={"pill " + (a.status === "Klargjort" ? "s-aktiv" : a.status === "Avvist" ? "s-kladd" : "s-innmeldt")}>{a.status}</span></td>
-                          <td style={{ whiteSpace: "normal", minWidth: 300 }}>
+                          <td style={{ whiteSpace: "normal", minWidth: 240 }}>
                             <div className="ny-avtale-edit">
                               <input
                                 key={a.id + "-navn"}
@@ -2168,7 +2173,7 @@ export default function StromflytPage() {
                               }}
                             />
                           </td>
-                          <td style={{ minWidth: 180 }}>
+                          <td style={{ minWidth: 145 }}>
                             {a.pandadoc_url ? (
                               <a className="ny-avtale-pandadoc-link" href={a.pandadoc_url} target="_blank" rel="noreferrer">
                                 Åpne i PandaDoc
@@ -3143,7 +3148,9 @@ const CSS = `
    linjer flyter utenfor knappen og ser ut som et underpunkt av raden over -
    sett i praksis med "Bekreftet · klar for Cloud". Ett-linjes tekst med
    avkorting løser det uansett hvor lang etiketten senere blir. */
-.sidenav button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sidenav button span:not(.sidenav-tall){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.sidenav-ikon{flex:none;color:#93a5ba}
+.sidenav button.active .sidenav-ikon{color:var(--sf-accent)}
 .sidenav button:hover{background:rgba(255,255,255,.08);color:#fff}
 .sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
 .sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe4ec;border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
