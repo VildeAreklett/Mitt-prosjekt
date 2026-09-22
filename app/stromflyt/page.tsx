@@ -116,7 +116,7 @@ const displayNameFromEmail = (email: string | null) => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 };
 
-type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "revisjon";
+type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
@@ -135,19 +135,17 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // samlekø for "dette gjenstår å sende inn".
   { key: "handling", label: "Ikke meldt inn", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
-  { key: "klar-cloud", label: "Registrert Entelios", statuses: ["Bekreftet"] },
+  // Masteren: ALT som noensinne er bekreftet av Entelios, uansett hvor langt
+  // det har kommet videre i Cloud-oppsettet - ikke bare de som fortsatt står
+  // igjen på "Bekreftet". Sept. 2026: sammenlignet mot ekte Entelios-eksport
+  // (målepunktsliste-22092026.xlsx) og bekreftet at dette tallet skal være
+  // 100% match med Entelios sin egen liste (63 stk) - se diskusjon om
+  // Elgsetergate 16, der to rader IKKE dukket opp her fordi de allerede
+  // hadde rukket videre til "Satt opp i Cloud", noe som så ut som de
+  // manglet fra registreringen selv om de faktisk var bekreftet for lengst.
+  { key: "klar-cloud", label: "Registrert Entelios", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
-  // Ikke en arbeidskø (den trenger ingen handling - "Satt opp i Cloud" og
-  // "Aktiv" har egne køer over for det som faktisk gjenstår) - dette er en
-  // revisjonsliste: ALT som noensinne er bekreftet av Entelios, uansett hvor
-  // langt det har kommet videre i Cloud-oppsettet. Skjult fra sidemenyen
-  // (skjult: true), bare nåbar via "Bekreftet av Entelios totalt"-panelet på
-  // Oversikt - se diskusjon om Elgsetergate 16 (sept. 2026): de to radene
-  // der IKKE dukket opp i "Registrert hos Entelios" fordi de allerede hadde
-  // rukket videre til "Satt opp i Cloud", noe som så ut som de manglet fra
-  // registreringen selv om de faktisk var bekreftet for lengst.
-  { key: "revisjon", label: "Bekreftet av Entelios (alle)", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"], skjult: true },
 ];
 
 // Kolonner i arbeidslisten som kan skrus av/på - Kunde og Handling vises alltid,
@@ -2441,7 +2439,7 @@ export default function StromflytPage() {
                 </div>
                 <button
                   className="livslop-revisjon"
-                  onClick={() => { setTab("reg"); setWorkFilter("revisjon"); setFltStatus(""); }}
+                  onClick={() => { setTab("reg"); setWorkFilter("klar-cloud"); setFltStatus(""); }}
                   title="Ikke en arbeidskø - viser ALT som er bekreftet av Entelios, uansett om det har kommet videre til Cloud-oppsett eller er aktivt i drift"
                 >
                   Bekreftet av Entelios totalt: <b>{bekreftetTotalt.antall}</b> av {bekreftetTotalt.avTotalt} →
@@ -2532,7 +2530,7 @@ export default function StromflytPage() {
                   </button>
                 )}
                 {prioriterteKoer.manglerCloudKobling.total > 0 && (
-                  <button className="neste-rad" onClick={() => { setTab("reg"); setWorkFilter("revisjon"); setFltStatus(""); }}>
+                  <button className="neste-rad" onClick={() => { setTab("reg"); setWorkFilter("klar-cloud"); setFltStatus(""); }}>
                     <span className="neste-ikon" aria-hidden="true">
                       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10Z" /></svg>
                     </span>
