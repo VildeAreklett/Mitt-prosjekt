@@ -2995,7 +2995,7 @@ export default function StromflytPage() {
               <legend>Overtakelse (valgfritt)</legend>
               <div className="radio-row">
                 {(["Eierskifte", "Spotavtale"] as const).map((at) => (
-                  <label key={at} className="radio-card" data-on={form.avtaletype === at} onClick={() => set("avtaletype", form.avtaletype === at ? "" : at)}>
+                  <label key={at} className="radio-card" data-on={form.avtaletype === at} onClick={(e) => { e.preventDefault(); set("avtaletype", form.avtaletype === at ? "" : at); }}>
                     <input type="radio" name="avtaletype" checked={form.avtaletype === at} readOnly />
                     <b>{at === "Eierskifte" ? "Eierskifte · eiers vilkår" : "Over på vår spotavtale"}</b>
                     <span>{at === "Eierskifte" ? "Overtar eksisterende leverandøravtale på samme vilkår som i dag." : "Kunden flyttes over på Adaptics egen spotavtale."}</span>
