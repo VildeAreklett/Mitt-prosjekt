@@ -2975,7 +2975,7 @@ export default function StromflytPage() {
                 </Field>
               </div>
               <Field label="MålepunktID (ELhub)" req err={errFor("maalepunkt_id")}>
-                <input className="num" inputMode="numeric" maxLength={18} placeholder="18 siffer" value={form.maalepunkt_id ?? ""} onChange={(e) => set("maalepunkt_id", e.target.value)} />
+                <input className="num" inputMode="numeric" maxLength={30} placeholder="18 siffer (strøm) - eller annen måler-ID, f.eks. fjernvarme" value={form.maalepunkt_id ?? ""} onChange={(e) => set("maalepunkt_id", e.target.value)} />
               </Field>
               <div className="grid2">
                 <Field label="Netteier" req err={errFor("netteier")} hint="Fylles fra adressen (NVE).">

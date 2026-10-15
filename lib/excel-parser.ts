@@ -191,7 +191,7 @@ export async function parseExcelWorkbook(bytes: Uint8Array): Promise<ParsedExcel
       const oppstart = isoDate(raw.oppstartdato || "");
       const problemer: string[] = [];
       if (!adresse) problemer.push("Mangler adresse");
-      if (!/^\d{18}$/.test(maalepunktId)) problemer.push("MålepunktID må være 18 siffer");
+      if (!/^[0-9A-Za-z-]{5,30}$/.test(maalepunktId)) problemer.push("Mangler/ugyldig MålepunktID");
       // Målenummer er IKKE en blokkerende mangel: MålepunktID er den unike,
       // pålitelige identifikatoren. Målenummer hentes ofte automatisk etterpå
       // via "Sjekk i Cloud" (se sjekkEnMaalerICloud i stromflyt/page.tsx) -

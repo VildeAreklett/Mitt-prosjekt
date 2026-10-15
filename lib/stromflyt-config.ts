@@ -128,8 +128,10 @@ export function validateMalepunkt(m: Partial<Malepunkt>, opts?: { draft?: boolea
   if (!req(m.bygg)) e.bygg = "Påkrevd.";
   if (!req(m.adresse)) e.adresse = "Påkrevd.";
   if (!req(m.maalenummer)) e.maalenummer = "Påkrevd.";
-  if (!/^[0-9]{18}$/.test(String(m.maalepunkt_id ?? "").trim()))
-    e.maalepunkt_id = "MålepunktID må være nøyaktig 18 siffer.";
+  // Strøm har 18-sifret MålepunktID (Elhub), men andre energibærere (f.eks.
+  // fjernvarme: 400000000988) har kortere ID-er og må også kunne registreres.
+  if (!/^[0-9A-Za-z-]{5,30}$/.test(String(m.maalepunkt_id ?? "").trim()))
+    e.maalepunkt_id = "Fyll inn MålepunktID/måler-ID (18 siffer for strøm).";
   if (!req(m.netteier)) e.netteier = "Velg netteier.";
   if (!PRISOMRADER.includes(String(m.prisomrade) as (typeof PRISOMRADER)[number]))
     e.prisomrade = "Velg prisområde.";
