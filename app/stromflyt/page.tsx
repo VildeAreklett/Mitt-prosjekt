@@ -1624,6 +1624,62 @@ export default function StromflytPage() {
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
 
+  // Entelios har ingen integrasjon - bekreftelsen kommer som en Excel-liste
+  // (anleggsliste/målepunktsliste) på mail. Les MålepunktID-ene fra den og flytt
+  // alle treff som ikke er bekreftet ennå til "Bekreftet" i ett steg, i stedet
+  // for å avstemme for hånd. Viser også avvik begge veier før noe endres.
+  async function avstemMotEntelios(file: File | undefined) {
+    if (!file) return;
+    try {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(await file.arrayBuffer());
+      const ids = new Set<string>();
+      for (const ws of wb.worksheets) {
+        let col = 0, headerRow = 0;
+        for (let r = 1; r <= Math.min(ws.rowCount, 10) && !col; r++) {
+          ws.getRow(r).eachCell((cell, c) => {
+            if (!col && /^(ean|målepunkt\s?-?\s?id|malepunkt\s?-?\s?id|målepunktsid)/i.test(String(cell.value ?? "").trim())) { col = c; headerRow = r; }
+          });
+        }
+        if (!col) continue;
+        for (let r = headerRow + 1; r <= ws.rowCount; r++) {
+          const v = String(ws.getRow(r).getCell(col).value ?? "").replace(/\D/g, "");
+          if (v.length === 18) ids.add(v);
+        }
+      }
+      if (!ids.size) { flash("Fant ingen MålepunktID-er i filen", "Forventer en kolonne som heter EAN eller MålepunktID"); return; }
+      const apen: Status[] = ["Innmeldt", "Klar for bestilling", "Sendt Entelios"];
+      const tilBekreftet = rows.filter((r) => apen.includes(r.status) && ids.has(r.maalepunkt_id.trim()));
+      const iRegister = new Set(rows.map((r) => r.maalepunkt_id.trim()));
+      const ikkeIRegister = [...ids].filter((id) => !iRegister.has(id));
+      const bekreftetUtenListe = rows.filter((r) => ["Bekreftet", "Satt opp i Cloud", "Aktiv"].includes(r.status) && !ids.has(r.maalepunkt_id.trim()));
+      const sammendrag =
+        `${file.name}: ${ids.size} målepunkt på Entelios-listen.\n\n` +
+        `• ${tilBekreftet.length} settes til «Registrert hos Entelios»\n` +
+        `• ${ikkeIRegister.length} står på listen men finnes ikke i Strømflyt\n` +
+        `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n\nFortsette?`;
+      if (!tilBekreftet.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
+      if (!window.confirm(sammendrag)) return;
+      await updateStatuses(tilBekreftet.map((r) => r.id), "Bekreftet");
+      await refresh();
+      flash(`${tilBekreftet.length} målepunkt satt til registrert hos Entelios`, `${ikkeIRegister.length} på listen mangler i Strømflyt · ${bekreftetUtenListe.length} mangler på listen`);
+    } catch (e: any) {
+      flash("Kunne ikke avstemme: " + (e.message ?? e));
+    }
+  }
+
+  async function markSelectedRegistered() {
+    const ids = selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").map((r) => r.id);
+    if (!ids.length) { flash("Velg poster med status Sendt Entelios"); return; }
+    if (!window.confirm(`Sette ${ids.length} valgte målepunkt som «Registrert hos Entelios»?`)) return;
+    try {
+      await updateStatuses(ids, "Bekreftet", "Sendt Entelios");
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
+      await refresh();
+      flash(`${ids.length} målepunkt satt som registrert hos Entelios`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
   // Samme regel som enkeltrad-slett: kun det som ikke er sendt til Entelios
   // ennå kan fjernes - unngår at noen ved et uhell slår sammen dette med
   // sletting av noe som allerede er ute av huset.
@@ -2602,6 +2658,12 @@ export default function StromflytPage() {
                   </>
                 )}
               </div>
+              {(workFilter === "venter" || workFilter === "handling") && (
+                <label className="btn" style={{ cursor: "pointer" }} title="Last opp anleggslisten fra Entelios - treff settes til «Registrert hos Entelios»">
+                  Avstem mot Entelios-liste
+                  <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void avstemMotEntelios(f); }} />
+                </label>
+              )}
               {workFilter === "kladd" ? (
                 <button className="btn primary" disabled={!filtered.length} onClick={() => void eksporterKladd()}>Last ned Adaptic-liste (Excel)</button>
               ) : (
@@ -2630,6 +2692,9 @@ export default function StromflytPage() {
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
                 Slett {selectedDeletableIds.length || "valgte"}
+              </button>
+              <button className="btn sm" disabled={!selectedRowsForBulk.some((r) => r.status === "Sendt Entelios")} onClick={markSelectedRegistered}>
+                Sett {selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").length || "valgte"} som registrert hos Entelios
               </button>
               <button className="btn sm primary" disabled={!selectedRegisteredIds.length} onClick={markSelectedReady}>
                 Sett {selectedRegisteredIds.length || "valgte"} som klar til Entelios
