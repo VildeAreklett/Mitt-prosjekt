@@ -66,6 +66,7 @@ const STATUS_CLASS: Record<Status, string> = {
   Bekreftet: "s-bekreftet",
   "Satt opp i Cloud": "s-cloud",
   Aktiv: "s-aktiv",
+  "På vent": "s-vent",
 };
 
 const shortStage = (s: string) =>
@@ -116,7 +117,7 @@ const displayNameFromEmail = (email: string | null) => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 };
 
-type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift";
+type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "pa-vent";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
@@ -146,6 +147,9 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   { key: "klar-cloud", label: "Registrert Entelios", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
+  // Parkert: skulle likevel ikke over til oss, eller må vente. Ikke en
+  // arbeidskø - bare et sted å ha kontroll på det som er tatt ut av løpet.
+  { key: "pa-vent", label: "På vent / ikke over", statuses: ["På vent"] },
 ];
 
 // Kolonner i arbeidslisten som kan skrus av/på - Kunde og Handling vises alltid,
@@ -453,10 +457,11 @@ export default function StromflytPage() {
         return b.avtalt_oppstart.localeCompare(a.avtalt_oppstart);
       }
       if (sortKey === "kunde") return a.kunde.localeCompare(b.kunde, "nb");
-      if (sortKey === "status") return STAGES.indexOf(a.status) - STAGES.indexOf(b.status);
+      const stageIdx = (st: Status) => { const i = STAGES.indexOf(st); return i < 0 ? 99 : i; };
+      if (sortKey === "status") return stageIdx(a.status) - stageIdx(b.status);
       if (sortKey === "nyeste") return String(b.created_at || "").localeCompare(String(a.created_at || ""));
       // Operativ kø: først neste steg i prosessen, deretter nærmeste oppstart.
-      const stage = STAGES.indexOf(a.status) - STAGES.indexOf(b.status);
+      const stage = stageIdx(a.status) - stageIdx(b.status);
       return stage || (a.avtalt_oppstart || "9999").localeCompare(b.avtalt_oppstart || "9999");
     });
   }, [rows, fltStatus, workFilter, search, sortKey]);
@@ -481,9 +486,14 @@ export default function StromflytPage() {
     [selectedRowsForBulk],
   );
   const selectedDeletableIds = useMemo(
-    () => selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling").map((r) => r.id),
+    () => selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling" || r.status === "På vent").map((r) => r.id),
     [selectedRowsForBulk],
   );
+  const selectedParkerbare = useMemo(
+    () => selectedRowsForBulk.filter((r) => STAGES.indexOf(r.status) >= 0 && STAGES.indexOf(r.status) < STAGES.indexOf("Bekreftet")),
+    [selectedRowsForBulk],
+  );
+  const selectedPaVent = useMemo(() => selectedRowsForBulk.filter((r) => r.status === "På vent"), [selectedRowsForBulk]);
   const excelSheet = useMemo(
     () => excelData?.sheets.find((s) => s.name === excelSheetName) || null,
     [excelData, excelSheetName],
@@ -498,10 +508,11 @@ export default function StromflytPage() {
   }).length || 0, [excelSheet, excelSelected, excelMappings, excelRowNetteier, excelRowPrisomrade, excelRowAarsforbruk, rows]);
 
   const tiles = useMemo(() => {
+    const alle = rows.filter((r) => r.status !== "På vent");
     const trenger = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length;
-    const eierskifte = rows.filter((r) => r.avtaletype === "Eierskifte").length;
-    const spotavtale = rows.filter((r) => r.avtaletype === "Spotavtale").length;
-    const ikkeAvklart = rows.filter((r) => !r.avtaletype).length;
+    const eierskifte = alle.filter((r) => r.avtaletype === "Eierskifte").length;
+    const spotavtale = alle.filter((r) => r.avtaletype === "Spotavtale").length;
+    const ikkeAvklart = alle.filter((r) => !r.avtaletype).length;
 
     // Volum vi faktisk skal levere på - summert årsforbruk for alt som er
     // sendt til Entelios eller lenger (dvs. reelt registrert hos dem, ikke
@@ -523,14 +534,14 @@ export default function StromflytPage() {
     // gwhRegistrert over: den teller kun det som faktisk er sendt videre,
     // dette teller hele salgspipelinen (inkl. Kladd/Innmeldt/Klar for
     // bestilling), som normalt er et større tall.
-    const gwhSolgtTotalt = sumKwh(rows) / 1_000_000;
-    const solgtUtenForbruk = rows.filter((r) => !r.aarsforbruk_kwh).length;
+    const gwhSolgtTotalt = sumKwh(alle) / 1_000_000;
+    const solgtUtenForbruk = alle.filter((r) => !r.aarsforbruk_kwh).length;
 
     const enUkeSiden = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const nyeDenneUken = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= enUkeSiden).length;
+    const nyeDenneUken = alle.filter((r) => r.created_at && new Date(r.created_at).getTime() >= enUkeSiden).length;
 
     return {
-      total: rows.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
+      total: alle.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
       gwhSolgtTotalt, solgtUtenForbruk,
     };
@@ -551,7 +562,7 @@ export default function StromflytPage() {
   // den i realiteten bare hadde rukket videre.
   const bekreftetTotalt = useMemo(() => {
     const antall = rows.filter((r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Bekreftet")).length;
-    return { antall, avTotalt: rows.length };
+    return { antall, avTotalt: rows.filter((r) => r.status !== "På vent").length };
   }, [rows]);
 
   // Prioriterte køer på Oversikt - de tre køene som faktisk trenger en
@@ -1668,6 +1679,36 @@ export default function StromflytPage() {
     }
   }
 
+  // Parkerer valgte rader (ikke bekreftet av Entelios ennå) som «På vent».
+  // Årsaken legges først i kommentaren slik at den følger raden.
+  async function settPaVent() {
+    const targets = selectedParkerbare;
+    if (!targets.length) { flash("Ingen av de valgte kan settes på vent", "Rader som allerede er registrert hos Entelios kan ikke parkeres"); return; }
+    const arsak = window.prompt(`Hvorfor settes ${targets.length} målepunkt på vent? (f.eks. «Skal ikke over likevel, avklart med Sandra»)`);
+    if (arsak === null) return;
+    const notat = `På vent ${new Date().toLocaleDateString("nb-NO")}${arsak.trim() ? `: ${arsak.trim()}` : ""}`;
+    try {
+      for (const r of targets) {
+        await updateStatus(r.id, "På vent", { kommentar: [notat, r.kommentar].filter(Boolean).join(" | ") });
+      }
+      setSelectedIds((current) => current.filter((id) => !targets.some((t) => t.id === id)));
+      await refresh();
+      flash(`${targets.length} målepunkt satt på vent`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
+  async function hentTilbakeFraVent() {
+    const ids = selectedPaVent.map((r) => r.id);
+    if (!ids.length) return;
+    if (!window.confirm(`Hente ${ids.length} målepunkt tilbake til «Registrert internt»?`)) return;
+    try {
+      await updateStatuses(ids, "Innmeldt", "På vent");
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
+      await refresh();
+      flash(`${ids.length} målepunkt hentet tilbake`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
   async function markSelectedRegistered() {
     const ids = selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").map((r) => r.id);
     if (!ids.length) { flash("Velg poster med status Sendt Entelios"); return; }
@@ -1684,8 +1725,8 @@ export default function StromflytPage() {
   // ennå kan fjernes - unngår at noen ved et uhell slår sammen dette med
   // sletting av noe som allerede er ute av huset.
   async function removeSelected() {
-    const targets = selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling");
-    if (!targets.length) { flash("Ingen av de valgte kan slettes (allerede sendt til Entelios eller senere)"); return; }
+    const targets = selectedRowsForBulk.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling" || r.status === "På vent");
+    if (!targets.length) { flash("Ingen av de valgte kan slettes", "Sett dem «På vent» først hvis de er sendt til Entelios"); return; }
     if (!window.confirm(`Slette ${targets.length} valgte målepunkt fra registeret? Dette kan ikke angres.`)) return;
     let ok = 0;
     const failures: string[] = [];
@@ -2626,7 +2667,7 @@ export default function StromflytPage() {
               <label className="flt">Status
                 <select value={fltStatus} onChange={(e) => { setFltStatus(e.target.value); setWorkFilter(""); }}>
                   <option value="">alle</option>
-                  {STAGES.map((s) => <option key={s} value={s}>{displayStatus(s)}</option>)}
+                  {[...STAGES, "På vent" as Status].map((s) => <option key={s} value={s}>{displayStatus(s)}</option>)}
                 </select>
               </label>
               <label className="flt">Sorter
@@ -2693,6 +2734,12 @@ export default function StromflytPage() {
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
                 Slett {selectedDeletableIds.length || "valgte"}
               </button>
+              <button className="btn sm" disabled={!selectedParkerbare.length} onClick={settPaVent} title="Tar raden ut av løpet uten å slette den - f.eks. målere som likevel ikke skal over til oss">
+                Sett {selectedParkerbare.length || "valgte"} på vent
+              </button>
+              {selectedPaVent.length > 0 && (
+                <button className="btn sm" onClick={hentTilbakeFraVent}>Hent {selectedPaVent.length} tilbake</button>
+              )}
               <button className="btn sm" disabled={!selectedRowsForBulk.some((r) => r.status === "Sendt Entelios")} onClick={markSelectedRegistered}>
                 Sett {selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").length || "valgte"} som registrert hos Entelios
               </button>
@@ -3425,6 +3472,7 @@ td .muted{color:var(--sf-ink-3)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:560;padding:3px 9px;border-radius:999px}
 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .pill.s-kladd{color:var(--sf-ink-2);background:var(--sf-surface-2)}
+.pill.s-vent{color:#8a5a00;background:#fdf1d6}
 .pill.s-innmeldt,.pill.s-sendt{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .pill.s-klar{color:var(--sf-warn);background:var(--sf-warn-soft)}
 .pill.s-bekreftet,.pill.s-cloud,.pill.s-aktiv{color:var(--sf-good);background:var(--sf-good-soft)}

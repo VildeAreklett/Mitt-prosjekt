@@ -156,7 +156,7 @@ export async function deleteMalepunkt(id: string): Promise<void> {
     .from(TABLE)
     .delete()
     .eq("id", id)
-    .in("status", ["Kladd", "Innmeldt", "Klar for bestilling"]);
+    .in("status", ["Kladd", "Innmeldt", "Klar for bestilling", "På vent"]);
   if (error) throw error;
 }
 

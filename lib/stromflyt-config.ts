@@ -8,7 +8,11 @@ export type Status =
   | "Sendt Entelios"
   | "Bekreftet"
   | "Satt opp i Cloud"
-  | "Aktiv";
+  | "Aktiv"
+  // Parkert utenfor løpet: skulle likevel ikke over til oss, eller må vente.
+  // Ligger bevisst IKKE i STAGES (indexOf = -1), så alle "status ≥ Sendt
+  // Entelios"-tellinger og innmeldingslister ignorerer den automatisk.
+  | "På vent";
 
 export const STAGES: Status[] = [
   "Kladd",
