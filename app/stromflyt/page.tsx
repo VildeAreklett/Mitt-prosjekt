@@ -232,6 +232,7 @@ export default function StromflytPage() {
   const [updatingExisting, setUpdatingExisting] = useState(false);
   const [importCloudOrg, setImportCloudOrg] = useState("Strømkunder");
   const [importSeller, setImportSeller] = useState("");
+  const [signertManuelt, setSignertManuelt] = useState(false);
   const [importName, setImportName] = useState("");
   const [fakturaParsing, setFakturaParsing] = useState(false);
   const [fakturaSaving, setFakturaSaving] = useState(false);
@@ -480,6 +481,15 @@ export default function StromflytPage() {
     [visibleCols]
   );
   const batchRows = useMemo(() => rows.filter((r) => r.status === "Klar for bestilling"), [rows]);
+  // Avtalen regnes som signert når PandaDoc-sertifikatet viser det, ELLER når
+  // brukeren selv bekrefter det (f.eks. en intern innmeldings-PDF uten
+  // signatursertifikat, der avtalen faktisk er signert andre steder).
+  const avtaleSignert = !!parsed && (parsed.avtale_signert || signertManuelt);
+  // Forslag til strøm-org: de faste + alle som allerede er brukt i registeret.
+  const cloudOrgForslag = useMemo(
+    () => [...new Set([...CLOUD_ORGS, ...rows.map((r) => (r.cloud_org || "").trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, "nb")),
+    [rows],
+  );
   const selectedRowsForBulk = useMemo(() => rows.filter((r) => selectedIds.includes(r.id)), [rows, selectedIds]);
   const selectedRegisteredIds = useMemo(
     () => selectedRowsForBulk.filter((r) => r.status === "Innmeldt").map((r) => r.id),
@@ -701,6 +711,7 @@ export default function StromflytPage() {
   async function parsePdf(file: File | undefined, fraNyAvtale?: NyAvtale) {
     if (!file) return;
     setNyAvtaleKobling(fraNyAvtale ?? null);
+    setSignertManuelt(false);
     setParsing(true);
     setParsed(null);
     setImportName(file.name);
@@ -1195,8 +1206,8 @@ export default function StromflytPage() {
 
   async function importParsedRows() {
     if (!parsed || !parsed.kunde || !parsed.org_nr) return;
-    if (!parsed.avtale_signert) {
-      flash("Avtalen må være ferdig signert før den legges i registeret");
+    if (!avtaleSignert) {
+      flash("Avtalen må være ferdig signert før den legges i registeret", "Bekreft signering under «Signatur» hvis den er signert andre steder");
       return;
     }
     const chosen = parsed.rows
@@ -1225,7 +1236,7 @@ export default function StromflytPage() {
           // AT-kode finnes normalt ikke i avtalen. Den kan fylles per rad i
           // forhåndsvisningen, eller suppleres senere før Entelios-bestilling.
           at_kode: (rowAtCodes[index] || "").trim(),
-          signert: parsed.avtale_signert,
+          signert: avtaleSignert,
           kommentar: [
             `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
             parsed.kommentar_forslag || "",
@@ -1292,7 +1303,7 @@ export default function StromflytPage() {
         await updateMalepunktDetails(existing.id, {
           avtalt_oppstart: existing.avtalt_oppstart || parsed.avtalt_oppstart || "",
           at_kode: existing.at_kode || (rowAtCodes[index] || "").trim(),
-          signert: existing.signert || parsed.avtale_signert,
+          signert: existing.signert || avtaleSignert,
           status: willAdvance ? "Innmeldt" : existing.status,
           kommentar: [
             existing.kommentar,
@@ -2039,7 +2050,7 @@ export default function StromflytPage() {
               <div className="import-org">
                 <label>Cloud-org</label>
                 <input list="faktura-cloud-orgs" value={fakturaCloudOrg} onChange={(e) => setFakturaCloudOrg(e.target.value)} />
-                <datalist id="faktura-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+                <datalist id="faktura-cloud-orgs">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist>
                 <span>Hvilken organisasjon i Adaptic Cloud målepunktene hører til - gjelder alle valgte rader under.</span>
               </div>
               <div className="import-org">
@@ -2727,7 +2738,7 @@ export default function StromflytPage() {
                 onChange={(e) => setBulkCloudOrg(e.target.value)}
                 title="Nødvendig for at «Sjekk i Cloud» skal vite hvilken organisasjon den skal lete i"
               />
-              <datalist id="cloud-org-list-bulk">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+              <datalist id="cloud-org-list-bulk">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist>
               <button className="btn sm" disabled={!bulkCloudOrg.trim()} onClick={() => setSelectedCloudOrg(bulkCloudOrg)}>Sett {selectedRowsForBulk.length} sin strøm-org</button>
               <button className="btn sm" onClick={sjekkFlereICloud}>Sjekk {selectedRowsForBulk.length} i Cloud</button>
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
@@ -2857,12 +2868,12 @@ export default function StromflytPage() {
                     <Summary k="Kunde" v={parsed.kunde || "Ikke funnet"} />
                     <Summary k="Org.nr" v={parsed.org_nr || "Ikke funnet"} mono />
                     <Summary k="Oppstart" v={parsed.avtalt_oppstart || "Ikke funnet"} mono />
-                    <Summary k="Signatur" v={parsed.avtale_signert ? "Fullført i PandaDoc" : "Ikke bekreftet"} good={parsed.avtale_signert} bad={!parsed.avtale_signert} />
+                    <Summary k="Signatur" v={parsed.avtale_signert ? "Fullført i PandaDoc" : signertManuelt ? "Bekreftet manuelt" : "Ikke bekreftet"} good={avtaleSignert} bad={!avtaleSignert} />
                   </div>
                   <div className="import-org">
                     <label>Kunde/organisasjon for strømregistreringen</label>
                     <input list="cloud-org-list" value={importCloudOrg} onChange={(e) => setImportCloudOrg(e.target.value)} />
-                    <datalist id="cloud-org-list">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+                    <datalist id="cloud-org-list">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist>
                     <span>Kontroller hvilken kundeorganisasjon bygget tilhører.</span>
                   </div>
                   <div className="import-org">
@@ -2876,17 +2887,25 @@ export default function StromflytPage() {
                       <b>Verdt å vite:</b> {parsed.kommentar_forslag}
                     </div>
                   )}
-                  {!parsed.avtale_signert && <div className="banner" style={{ margin: "0 18px 18px" }}>Avtalen ser ikke ferdig signert ut. Du kan kontrollere funnene, men ikke lagre dem ennå.</div>}
+                  {!parsed.avtale_signert && (
+                    <div className="banner" style={{ margin: "0 18px 18px" }}>
+                      Fant ikke noe PandaDoc-signatursertifikat i PDF-en, så avtalen ser ikke ferdig signert ut.
+                      <label className="checkline" style={{ marginTop: 8 }}>
+                        <input type="checkbox" checked={signertManuelt} onChange={(e) => setSignertManuelt(e.target.checked)} />
+                        Jeg bekrefter at avtalen er signert av begge parter (f.eks. signert andre steder)
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 <div className="toolbar">
                   <strong>{parsed.rows.length} målepunkt funnet</strong>
                   <span className="muted">Gyldige, nye rader er valgt automatisk. Dubletter med et Kladd-utkast fra før kan flyttes til Klar til innmelding i stedet.</span>
                   <span className="grow" />
-                  <button className="btn" disabled={updatingExisting || !parsed.avtale_signert || !Object.values(updateRows).some(Boolean)} onClick={updateExistingFromAvtale}>
+                  <button className="btn" disabled={updatingExisting || !avtaleSignert || !Object.values(updateRows).some(Boolean)} onClick={updateExistingFromAvtale}>
                     {updatingExisting ? "Flytter …" : `Flytt ${Object.values(updateRows).filter(Boolean).length} til Klar til innmelding`}
                   </button>
-                  <button className="btn primary" disabled={importing || !parsed.avtale_signert || !Object.values(selectedRows).some(Boolean)} onClick={importParsedRows}>
+                  <button className="btn primary" disabled={importing || !avtaleSignert || !Object.values(selectedRows).some(Boolean)} onClick={importParsedRows}>
                     {importing ? "Legger inn …" : `Legg ${Object.values(selectedRows).filter(Boolean).length} i registeret`}
                   </button>
                 </div>
@@ -2973,7 +2992,7 @@ export default function StromflytPage() {
                             ))}
                           </td>
                           <td><input className="compact-input" placeholder="ansvarlig selger" value={m.selger} onChange={(e) => setExcelMapping(key, { selger: e.target.value })} /></td>
-                          <td><input list="excel-cloud-orgs" value={m.cloud_org} onChange={(e) => setExcelMapping(key, { cloud_org: e.target.value })} /><datalist id="excel-cloud-orgs">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist></td>
+                          <td><input list="excel-cloud-orgs" value={m.cloud_org} onChange={(e) => setExcelMapping(key, { cloud_org: e.target.value })} /><datalist id="excel-cloud-orgs">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist></td>
                           <td><select value={m.avtaletype} onChange={(e) => setExcelMapping(key, { avtaletype: e.target.value as ExcelGroupConfig["avtaletype"] })}><option value="">velg</option><option value="Spotavtale">Spotavtale</option><option value="Eierskifte">Eierskifte</option></select></td>
                           <td><label className="checkline"><input type="checkbox" checked={m.signert} onChange={(e) => setExcelMapping(key, { signert: e.target.checked })} /> Ja</label></td>
                           <td>
@@ -3055,7 +3074,7 @@ export default function StromflytPage() {
               </Field>
               <Field label="Kunde/organisasjon for strømregistreringen" req err={errFor("cloud_org")} hint={'Er kunden satt opp som egen strømkunde i Cloud ("i drift"): bruk "SK <kundenavn>". Er den ikke det ennå: bruk kundens vanlige orgnavn (f.eks. "Bergensgruppen AS").'}>
                 <input list="cloud-org-list-form" value={form.cloud_org ?? ""} onChange={(e) => set("cloud_org", e.target.value)} placeholder="SK <kundenavn> eller kundens orgnavn" />
-                <datalist id="cloud-org-list-form">{CLOUD_ORGS.map((o) => <option key={o} value={o} />)}</datalist>
+                <datalist id="cloud-org-list-form">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist>
               </Field>
             </fieldset>
 
