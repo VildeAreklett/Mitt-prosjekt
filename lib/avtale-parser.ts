@@ -58,8 +58,19 @@ signatursertifikatet på siste side, og kall verktøyet ${TOOL_NAME} med feltene
   BEGGE parter faktisk har signert (se etter "DOCUMENT COMPLETED BY ALL
   PARTIES" og to fullførte SIGNED-tidsstempler). IKKE stol på en eventuell
   "Signert"-kolonne i selve anleggstabellen - den er ofte bare en mal-rest og
-  reflekterer ikke faktisk signaturstatus.
-- rows: én rad per anlegg i "Anleggsopplysninger"-tabellen, med feltene:
+  reflekterer ikke faktisk signaturstatus. Mangler dokumentet et
+  signatursertifikat helt (f.eks. en intern innmeldings-PDF som bare skriver
+  "signert 20.10.2026" i teksten), sett avtale_signert til false.
+- rows: én rad per anlegg/målepunkt. Målepunktene står vanligvis i
+  "Anleggsopplysninger"-tabellen, men kan også stå i en tabell, liste eller
+  serie med kort under overskrifter som "Målepunkt" / "Målepunkt 1, 2, 3" (f.eks.
+  i en intern innmeldings-PDF), der hvert målepunkt har Målernummer og
+  MålepunktID. Ta ALLTID med hvert målepunkt du finner med en MålepunktID
+  (18 siffer), uansett hva tabellen heter og uansett om dokumentet også
+  beskriver leietakerfakturering. Står det bare ett sted (felles for alle) hva
+  netteier, prisområde eller oppstart er, bruk det på alle radene.
+  Adresse: bruk bygg/plassering fra målepunktet (f.eks. "Aasegården, 2. etg,
+  Bergen"). Årsforbruk som ikke er oppgitt settes til null. Feltene per rad:
   - adresse: adressen for anlegget
   - maalenummer: målernummer
   - maalepunkt_id: MålepunktID/EAN - skal være nøyaktig 18 siffer. Hvis
@@ -71,8 +82,9 @@ signatursertifikatet på siste side, og kall verktøyet ${TOOL_NAME} med feltene
   - aarsforbruk_kwh: årsforbruk i kWh, heltall
   - gyldig: true med mindre maalepunkt_id mangler (se over)
   - problem: kun satt hvis gyldig er false
-  Hvis avtalen har en byggliste (leietakerfakturering) i stedet for en
-  målertabell, returner en tom rows-liste.
+  Returner KUN en tom rows-liste hvis dokumentet ikke inneholder noen
+  MålepunktID-er i det hele tatt (rene leietakeravtaler med en byggliste uten
+  måler-ID-er).
 - note: valgfri kort tekst KUN hvis du ikke fant noen anleggstabell i det hele
   tatt (f.eks. "Fant ingen målepunkt-tabell i avtalen. Sjekk at det er en
   Adaptic-strømavtale."), eller hvis det er en leietakeravtale uten
