@@ -162,10 +162,11 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // sidemenyavsnitt (se "FORARBEID" i navigasjonen) i stedet for blant de
   // andre arbeidskøene, siden den ikke hører til selve innmeldingsløpet.
   { key: "kladd", label: "Kladd", statuses: ["Kladd"], skjult: true },
-  // Alt som ikke er sendt til Entelios ennå, uansett om det er registrert
-  // internt (Kladd/Innmeldt) eller klart (Klar for bestilling) - én enkel
-  // samlekø for "dette gjenstår å sende inn".
-  { key: "handling", label: "Ikke meldt inn", statuses: ["Kladd", "Innmeldt", "Klar for bestilling"] },
+  // Alt som er klart til å sendes til Entelios (Innmeldt/Klar for bestilling) -
+  // én enkel samlekø for "dette gjenstår å sende inn". Kladd er BEVISST ikke
+  // med: det er forarbeid uten avtale, og skal aldri havne i en innmeldingsfil
+  // eller bli markert som sendt ved et uhell (se egen Kladd-kø).
+  { key: "handling", label: "Ikke meldt inn", statuses: ["Innmeldt", "Klar for bestilling"] },
   { key: "venter", label: "Venter på Entelios", statuses: ["Sendt Entelios"] },
   // Masteren: ALT som noensinne er bekreftet av Entelios, uansett hvor langt
   // det har kommet videre i Cloud-oppsettet - ikke bare de som fortsatt står
@@ -637,7 +638,7 @@ export default function StromflytPage() {
       if (!iso) return null;
       return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000)));
     };
-    const ikkeMeldtInn = rows.filter((r) => r.status === "Kladd" || r.status === "Innmeldt" || r.status === "Klar for bestilling");
+    const ikkeMeldtInn = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling");
     const venterPaEntelios = rows.filter((r) => r.status === "Sendt Entelios");
     const cloudOppsett = rows.filter((r) => r.status === "Satt opp i Cloud");
     const venterDager = venterPaEntelios.map((r) => dagerSiden(r.updated_at) ?? 0);
@@ -1838,6 +1839,20 @@ export default function StromflytPage() {
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
 
+  // Marker valgte (Registrert internt / Klar til Entelios) som sendt i ett steg,
+  // uten å måtte innom «Sett som klar» først. Kladd tas aldri med.
+  async function markSelectedSent() {
+    const ids = selectedRowsForBulk.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").map((r) => r.id);
+    if (!ids.length) { flash("Velg poster som er registrert internt eller klare til Entelios"); return; }
+    if (!window.confirm(`Marker ${ids.length} målepunkt som sendt til Entelios? Gjør dette først når mailen er sendt.`)) return;
+    try {
+      await updateStatuses(ids, "Sendt Entelios");
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
+      await refresh();
+      flash(`${ids.length} målepunkt markert som sendt til Entelios`);
+    } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
   async function markSelectedRegistered() {
     const ids = selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").map((r) => r.id);
     if (!ids.length) { flash("Velg poster med status Sendt Entelios"); return; }
@@ -2892,6 +2907,9 @@ export default function StromflytPage() {
               {selectedPaVent.length > 0 && (
                 <button className="btn sm" onClick={hentTilbakeFraVent}>Hent {selectedPaVent.length} tilbake</button>
               )}
+              <button className="btn sm primary" disabled={!selectedRowsForBulk.some((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling")} onClick={markSelectedSent} title="Når innmeldingsmailen er sendt: flytter valgte til «Venter på Entelios»">
+                Marker {selectedRowsForBulk.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length || "valgte"} som sendt til Entelios
+              </button>
               <button className="btn sm" disabled={!selectedRowsForBulk.some((r) => r.status === "Sendt Entelios")} onClick={markSelectedRegistered}>
                 Sett {selectedRowsForBulk.filter((r) => r.status === "Sendt Entelios").length || "valgte"} som registrert hos Entelios
               </button>
