@@ -124,7 +124,9 @@ async function tryDirectToken(token: string): Promise<MethodResult> {
 // «Bearer » foran - begge gir 401 selv om selve tokenet er gyldig.
 function rensToken(raw: string | undefined): string | undefined {
   if (!raw) return raw;
-  return raw.trim().replace(/^bearer\s+/i, "").replace(/^["']|["']$/g, "").trim();
+  // Fjern også linjeskift/mellomrom MIDT i verdien - et langt token limt inn
+  // fra en chat eller mail får ofte linjeskift der teksten brytes.
+  return raw.trim().replace(/^bearer\s+/i, "").replace(/^["']|["']$/g, "").replace(/\s+/g, "");
 }
 
 // Tolkning 1: tokenet er et admin-token som må brukes til å "minte" et nytt,
@@ -319,7 +321,7 @@ export async function slaOppMalepunktICloud(
   try {
     const diagnostikk: string[] = [];
     if (!adminToken) diagnostikk.push("ADAPTIC_CLOUD_ADMIN_TOKEN er ikke satt i miljøvariablene");
-    else if (rawAdmin !== adminToken) diagnostikk.push("(tokenet hadde mellomrom/linjeskift/«Bearer» rundt seg - renset)");
+    else if (rawAdmin !== adminToken) diagnostikk.push(`(tokenet hadde mellomrom/linjeskift/«Bearer» i seg - renset, ${rawAdmin?.length} -> ${adminToken.length} tegn)`);
     else diagnostikk.push(`(token lest: ${adminToken.length} tegn)`);
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
