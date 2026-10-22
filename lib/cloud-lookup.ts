@@ -21,6 +21,7 @@
 // MetricController for hvordan dette er bygget opp der.
 
 import { CLOUD_ORGS_FALLBACK } from "./cloud-orgs-fallback";
+import { beregnPrognose, type Prognose } from "./forbruk-prognose";
 
 const CLOUD_API_BASE = process.env.ADAPTIC_CLOUD_API_BASE_URL || "https://api.adaptic.no";
 
@@ -540,21 +541,19 @@ export async function hentMaanedsforbruk(
   return { ok: true, perMonthKwh };
 }
 
-// Estimert årsforbruk for ETT enkelt målepunkt som allerede er koblet opp i
-// Cloud (mainImported + tsdb_id), brukt til å fylle inn "Årsforbruk"
-// automatisk ved "Sjekk i Cloud" når feltet mangler fra kilden - f.eks. en
-// Entelios-innmeldingsmal uten årsforbruk-kolonne i det hele tatt (se
-// excel-parser.ts). Siste 365 dager (rullerende), ikke kalenderår - måleren
-// kan ha vært i drift lenge før den ble meldt inn her, og et rent
-// kalenderår ville gitt et kunstig lavt tall tidlig på året.
+// Årsforbruk for ETT enkelt målepunkt som allerede er koblet opp i Cloud
+// (mainImported + tsdb_id), brukt til å fylle inn "Årsforbruk" automatisk ved
+// "Sjekk i Cloud" og i den daglige jobben. Henter månedlige målinger for de
+// siste 12 HELE månedene (+ inneværende) og lar beregnPrognose avgjøre om det
+// er målt helår eller sesongjustert prognose for nye målere - se
+// lib/forbruk-prognose.ts.
 export async function hentEstimertAarsforbruk(
   token: string,
   metricId: string,
-): Promise<{ ok: true; kwh: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; kwh: number; prognose: Prognose } | { ok: false; error: string }> {
   const now = new Date();
-  const from = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
-  const to = now.toISOString();
-  const qs = new URLSearchParams({ from, to, resolution: "MONTH", rollup: "SUM", padding: "true" });
+  const fra = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 13, 1));
+  const qs = new URLSearchParams({ from: fra.toISOString(), to: now.toISOString(), resolution: "MONTH", rollup: "SUM", padding: "true", tz: "Europe/Oslo" });
   const res = await fetch(`${CLOUD_API_BASE}/v1/metrics/data?${qs.toString()}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
@@ -565,10 +564,8 @@ export async function hentEstimertAarsforbruk(
   const body = (await res.json().catch(() => null)) as Record<string, TimeseriesPoint[]> | null;
   if (!body) return { ok: false, error: "Uventet svar fra /v1/metrics/data" };
 
-  let kwh = 0;
-  for (const points of Object.values(body)) {
-    if (!Array.isArray(points)) continue;
-    for (const p of points) if (typeof p?.value === "number") kwh += p.value;
-  }
-  return { ok: true, kwh: Math.round(kwh) };
+  const punkter = (body[metricId] ?? Object.values(body)[0] ?? []) as TimeseriesPoint[];
+  const prognose = beregnPrognose(Array.isArray(punkter) ? punkter : [], now);
+  if (!prognose) return { ok: false, error: "Cloud har ingen fullstendige måneder med måledata på denne måleren ennå" };
+  return { ok: true, kwh: prognose.aarskwh, prognose };
 }

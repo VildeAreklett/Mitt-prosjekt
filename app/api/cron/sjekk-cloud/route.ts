@@ -48,16 +48,36 @@ export async function GET(req: Request) {
   // automatisk - se finnOrgMedMalepunkt i lib/cloud-lookup.ts). Rader
   // som allerede er "Aktiv" tas bare med når årsforbruk mangler - da skal det
   // hentes fra Cloud (ingenting annet å oppdage for dem).
-  const { data: rows, error: fetchError } = await supabase
-    .from(TABLE)
-    .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh")
-    .or("status.neq.Aktiv,aarsforbruk_kwh.is.null")
-    .neq("status", "På vent")
-    .not("maalepunkt_id", "is", null)
-    .order("updated_at", { ascending: true }); // eldst sjekket først
-
-  if (fetchError) {
-    return NextResponse.json({ ok: false, error: fetchError.message }, { status: 500 });
+  // Forbruk fra Cloud oppdateres på nytt hver 7. dag (flere måneder med data
+  // gir bedre prognose). Kolonnene forbruk_* finnes først etter migration-013 -
+  // faller tilbake til enklere spørring hvis de mangler.
+  const syvDagerSiden = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  let rows: Record<string, unknown>[] | null = null;
+  let harForbrukKolonner = true;
+  {
+    const r1 = await supabase
+      .from(TABLE)
+      .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh, forbruk_kilde, forbruk_oppdatert")
+      .or(`status.neq.Aktiv,aarsforbruk_kwh.is.null,and(forbruk_kilde.eq.cloud,forbruk_oppdatert.lt.${syvDagerSiden}),and(forbruk_kilde.eq.cloud,forbruk_oppdatert.is.null)`)
+      .neq("status", "På vent")
+      .not("maalepunkt_id", "is", null)
+      .order("updated_at", { ascending: true }); // eldst sjekket først
+    if (r1.error && /forbruk_/.test(r1.error.message)) {
+      harForbrukKolonner = false;
+      const r2 = await supabase
+        .from(TABLE)
+        .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh")
+        .or("status.neq.Aktiv,aarsforbruk_kwh.is.null")
+        .neq("status", "På vent")
+        .not("maalepunkt_id", "is", null)
+        .order("updated_at", { ascending: true });
+      if (r2.error) return NextResponse.json({ ok: false, error: r2.error.message }, { status: 500 });
+      rows = r2.data as Record<string, unknown>[];
+    } else if (r1.error) {
+      return NextResponse.json({ ok: false, error: r1.error.message }, { status: 500 });
+    } else {
+      rows = r1.data as Record<string, unknown>[];
+    }
   }
 
   const alle = rows ?? [];
@@ -112,7 +132,10 @@ export async function GET(req: Request) {
     if (result.sikkerIdentitet && result.cloud_org_funnet && result.cloud_org_funnet !== ((rad.cloud_org as string) || "").trim()) {
       patch.cloud_org = result.cloud_org_funnet;
     }
-    if (rad.aarsforbruk_kwh == null && result.sikkerIdentitet) {
+    // Fylles inn når tomt, og oppdateres når tallet tidligere kom fra Cloud.
+    // Tall lagt inn for hånd (forbruk_kilde tom) overskrives aldri.
+    const kanOppdatereForbruk = rad.aarsforbruk_kwh == null || (harForbrukKolonner && rad.forbruk_kilde === "cloud");
+    if (kanOppdatereForbruk && result.sikkerIdentitet) {
       // Samme tilgang som fant måleren først, deretter org-token som reserve.
       const tokens: string[] = [];
       if (result.token_brukt) tokens.push(result.token_brukt);
@@ -128,8 +151,15 @@ export async function GET(req: Request) {
       for (const token of tokens) {
         try {
           const f = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
-          if (f.ok && f.kwh > 0) {
+          if (f.ok) {
             patch.aarsforbruk_kwh = Math.round(f.kwh);
+            if (harForbrukKolonner) {
+              patch.forbruk_kilde = "cloud";
+              patch.forbruk_maaneder = f.prognose.maaneder;
+              patch.forbruk_fra = f.prognose.fra;
+              patch.forbruk_til = f.prognose.til;
+              patch.forbruk_oppdatert = new Date().toISOString();
+            }
             oppdatertForbruk += 1;
             break;
           }

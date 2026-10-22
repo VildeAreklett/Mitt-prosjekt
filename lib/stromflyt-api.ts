@@ -101,7 +101,14 @@ export async function updateMalepunktDetails(
   id: string,
   patch: Partial<Omit<Malepunkt, "id" | "created_at" | "updated_at">>,
 ): Promise<void> {
-  const { error } = await supabase.from(TABLE).update(tilDbRad(patch)).eq("id", id);
+  let { error } = await supabase.from(TABLE).update(tilDbRad(patch)).eq("id", id);
+  // migration-013 (forbruk_*-kolonnene) er kanskje ikke kjørt ennå - lagre da
+  // resten i stedet for at hele oppdateringen (tsdb_id osv.) feiler.
+  if (error && /forbruk_/.test(error.message || "")) {
+    const uten = Object.fromEntries(Object.entries(patch).filter(([k]) => !k.startsWith("forbruk_")));
+    if (Object.keys(uten).length) ({ error } = await supabase.from(TABLE).update(tilDbRad(uten)).eq("id", id));
+    else error = null;
+  }
   if (error) {
     if (error.code === "23505") throw new Error("Dette målepunktet ligger allerede i registeret.");
     throw error;

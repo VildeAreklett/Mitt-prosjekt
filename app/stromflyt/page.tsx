@@ -58,6 +58,23 @@ type ExcelGroupConfig = {
 const excelGroupKey = (r: ParsedExcelRow) =>
   r.referansekode || r.selskapsnavn || r.kunde_hint || r.bygg || r.adresse;
 
+// Merke for årsforbruk som er beregnet fra Cloud: «12 mnd» = målt helår, færre
+// måneder = sesongjustert prognose (se lib/forbruk-prognose.ts).
+function forbrukMerke(r: Malepunkt): { tekst: string; tittel: string; klasse: string } | null {
+  if (r.forbruk_kilde !== "cloud" || !r.forbruk_maaneder) return null;
+  const n = r.forbruk_maaneder;
+  const periode = r.forbruk_fra && r.forbruk_til ? ` (${r.forbruk_fra} - ${r.forbruk_til})` : "";
+  if (n >= 12) {
+    return { tekst: "12 mnd", klasse: "forbruk-merke malt", tittel: `Målt forbruk siste 12 hele måneder fra Adaptic Cloud${periode}. Oppdateres automatisk.` };
+  }
+  const sikkerhet = n >= 6 ? "middels sikkerhet" : n >= 3 ? "lav sikkerhet" : "svært usikker";
+  return {
+    tekst: `${n} mnd`,
+    klasse: `forbruk-merke prognose${n < 3 ? " svaert-lav" : n < 6 ? " lav" : ""}`,
+    tittel: `Prognose: bare ${n} hele måneders måling i Cloud${periode}, sesongjustert til helår (${sikkerhet}). Oppdateres automatisk etter hvert som det kommer mer data.`,
+  };
+}
+
 const STATUS_CLASS: Record<Status, string> = {
   Kladd: "s-kladd",
   Innmeldt: "s-innmeldt",
@@ -546,6 +563,9 @@ export default function StromflytPage() {
     // bestilling), som normalt er et større tall.
     const gwhSolgtTotalt = sumKwh(alle) / 1_000_000;
     const solgtUtenForbruk = alle.filter((r) => !r.aarsforbruk_kwh).length;
+    const prognoseRader = alle.filter((r) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 12) < 12);
+    const prognoseAntall = prognoseRader.length;
+    const gwhPrognose = sumKwh(prognoseRader) / 1_000_000;
 
     const enUkeSiden = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const nyeDenneUken = alle.filter((r) => r.created_at && new Date(r.created_at).getTime() >= enUkeSiden).length;
@@ -553,7 +573,7 @@ export default function StromflytPage() {
     return {
       total: alle.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
-      gwhSolgtTotalt, solgtUtenForbruk,
+      gwhSolgtTotalt, solgtUtenForbruk, prognoseAntall, gwhPrognose,
     };
   }, [rows]);
 
@@ -1488,9 +1508,19 @@ export default function StromflytPage() {
       // i Cloud, bruk faktiske måledata som et estimat i stedet for å la
       // feltet stå tomt til noen finner det manuelt.
       let forbrukMelding = "";
-      if (data.estimert_aarsforbruk_kwh && r.aarsforbruk_kwh == null) {
-        detaljer.aarsforbruk_kwh = data.estimert_aarsforbruk_kwh;
-        forbrukMelding = `, estimert årsforbruk ${fmt(data.estimert_aarsforbruk_kwh)} kWh`;
+      // Fylles inn når feltet er tomt, og oppdateres på nytt når tallet tidligere
+      // kom fra Cloud (flere måneders data gir bedre prognose). Tall lagt inn
+      // for hånd overskrives aldri.
+      const kanOppdatereForbruk = r.aarsforbruk_kwh == null || r.forbruk_kilde === "cloud";
+      if (data.forbruk_prognose && kanOppdatereForbruk) {
+        const p = data.forbruk_prognose as { aarskwh: number; maaneder: number; fra: string | null; til: string | null };
+        detaljer.aarsforbruk_kwh = p.aarskwh;
+        detaljer.forbruk_kilde = "cloud";
+        detaljer.forbruk_maaneder = p.maaneder;
+        detaljer.forbruk_fra = p.fra;
+        detaljer.forbruk_til = p.til;
+        detaljer.forbruk_oppdatert = new Date().toISOString();
+        forbrukMelding = `, årsforbruk ${fmt(p.aarskwh)} kWh (${p.maaneder >= 12 ? "målt 12 mnd" : `prognose fra ${p.maaneder} mnd`})`;
       } else if (r.aarsforbruk_kwh == null && data.forbruk_feil) {
         forbrukMelding = `, årsforbruk ikke hentet (${data.forbruk_feil})`;
       }
@@ -2530,7 +2560,7 @@ export default function StromflytPage() {
               <Tile
                 k="Totalt solgt volum"
                 v={`${tiles.gwhSolgtTotalt.toFixed(2)} GWh`}
-                sub={`anslag, alle ${tiles.total} - uansett status · ${tiles.solgtUtenForbruk > 0 ? `${tiles.solgtUtenForbruk} mangler årsforbruk` : "alle har årsforbruk"}`}
+                sub={`anslag, alle ${tiles.total} - uansett status · ${tiles.solgtUtenForbruk > 0 ? `${tiles.solgtUtenForbruk} mangler årsforbruk` : "alle har årsforbruk"}${tiles.prognoseAntall > 0 ? ` · ${tiles.prognoseAntall} er prognose fra under 12 mnd (${tiles.gwhPrognose.toFixed(2)} GWh)` : ""}`}
                 alert={tiles.solgtUtenForbruk > 0}
               />
             </div>
@@ -2802,7 +2832,7 @@ export default function StromflytPage() {
                         {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
                         {visibleCols.netteier && <td>{r.netteier}</td>}
                         {visibleCols.prisomrade && <td>{r.prisomrade}</td>}
-                        {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}</td>}
+                        {visibleCols.aarsforbruk_kwh && <td className="num">{fmt(r.aarsforbruk_kwh)}{(() => { const m = forbrukMerke(r); return m ? <span className={m.klasse} title={m.tittel}>{m.tekst}</span> : null; })()}</td>}
                         {visibleCols.avtalt_oppstart && <td>{r.avtalt_oppstart || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.tsdb_id && <td className="num">{r.tsdb_id || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.status && (
@@ -3502,6 +3532,11 @@ td .muted{color:var(--sf-ink-3)}
 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .pill.s-kladd{color:var(--sf-ink-2);background:var(--sf-surface-2)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
+.forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
+.forbruk-merke.malt{color:var(--sf-ink-2);background:var(--sf-surface-2)}
+.forbruk-merke.prognose{color:#8a5a00;background:#fdf1d6}
+.forbruk-merke.prognose.lav{color:#9a4a00;background:#fde6cc}
+.forbruk-merke.prognose.svaert-lav{color:#a12a2a;background:#fbe0e0}
 .pill.s-innmeldt,.pill.s-sendt{color:var(--sf-accent);background:var(--sf-accent-soft)}
 .pill.s-klar{color:var(--sf-warn);background:var(--sf-warn-soft)}
 .pill.s-bekreftet,.pill.s-cloud,.pill.s-aktiv{color:var(--sf-good);background:var(--sf-good-soft)}

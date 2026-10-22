@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireStromflytAccess } from "../../../../lib/server-auth";
 import { slaOppMalepunktICloud, hentTokenForOrg, hentEstimertAarsforbruk } from "../../../../lib/cloud-lookup";
+import type { Prognose } from "../../../../lib/forbruk-prognose";
 
 // Interaktiv "Sjekk i Cloud"-knapp for én rad. Selve oppslagslogikken ligger
 // i lib/cloud-lookup.ts, delt med den daglige automatiske jobben
@@ -36,6 +37,7 @@ export async function GET(req: Request) {
   // skal ikke selve Cloud-oppslaget rammes. Se hentEstimertAarsforbruk.
   let estimert_aarsforbruk_kwh: number | null = null;
   let forbruk_feil: string | null = null;
+  let forbruk_prognose: Prognose | null = null;
   if (result.funnet) {
     try {
       // Bruk SAMME tilgang som fant måleren (den kan ligge i en annen org enn
@@ -50,8 +52,8 @@ export async function GET(req: Request) {
       if (!tokens.length) forbruk_feil = "fant ikke noe token som gir tilgang til måledata";
       for (const token of tokens) {
         const forbrukRes = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
-        if (forbrukRes.ok && forbrukRes.kwh > 0) { estimert_aarsforbruk_kwh = forbrukRes.kwh; forbruk_feil = null; break; }
-        forbruk_feil = forbrukRes.ok ? "Cloud har ingen måledata siste 12 måneder på denne måleren" : forbrukRes.error;
+        if (forbrukRes.ok) { estimert_aarsforbruk_kwh = forbrukRes.kwh; forbruk_prognose = forbrukRes.prognose; forbruk_feil = null; break; }
+        forbruk_feil = forbrukRes.error;
       }
     } catch (e) {
       forbruk_feil = e instanceof Error ? e.message : "ukjent feil";
@@ -76,6 +78,7 @@ export async function GET(req: Request) {
       foreslatt_status: null,
       metode: result.metode,
       estimert_aarsforbruk_kwh,
+      forbruk_prognose,
       forbruk_feil,
       cloud_org_funnet: null,
     });
@@ -84,5 +87,5 @@ export async function GET(req: Request) {
   // token_brukt skal ALDRI til nettleseren.
   const offentlig: Record<string, unknown> = { ...result };
   delete offentlig.token_brukt;
-  return NextResponse.json({ ...offentlig, estimert_aarsforbruk_kwh, forbruk_feil });
+  return NextResponse.json({ ...offentlig, estimert_aarsforbruk_kwh, forbruk_prognose, forbruk_feil });
 }

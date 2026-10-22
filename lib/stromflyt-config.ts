@@ -96,6 +96,14 @@ export interface Malepunkt {
   leverandoravtale_fil_sti: string | null;
   status: Status;
   entelios_ref: string;
+  // Hvor årsforbruket kommer fra: "cloud" = beregnet fra Adaptic Cloud
+  // (forbruk_maaneder < 12 betyr sesongjustert prognose), tom = lagt inn for
+  // hånd/fra avtale. Se migration-013 og lib/forbruk-prognose.ts.
+  forbruk_kilde?: string | null;
+  forbruk_maaneder?: number | null;
+  forbruk_fra?: string | null;
+  forbruk_til?: string | null;
+  forbruk_oppdatert?: string | null;
   created_at?: string;
   updated_at?: string;
 }
