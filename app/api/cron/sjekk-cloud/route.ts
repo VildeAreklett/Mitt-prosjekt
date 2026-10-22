@@ -61,6 +61,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: fetchError.message }, { status: 500 });
   }
 
+  // Rader uten strøm-org kan aldri slås opp (jf. .neq("cloud_org", "") over) -
+  // tell dem og si fra i loggen i stedet for at de bare ikke er med.
+  const { count: utenStromOrg } = await supabase
+    .from(TABLE)
+    .select("id", { count: "exact", head: true })
+    .or("cloud_org.is.null,cloud_org.eq.")
+    .neq("status", "På vent");
+
   const alle = rows ?? [];
   const utvalg = alle.slice(0, MAKS_RADER_PER_KJORING);
   const droppet = alle.length - utvalg.length;
@@ -140,6 +148,7 @@ export async function GET(req: Request) {
     ok: true,
     sjekket: utvalg.length,
     droppet_denne_runden: droppet,
+    hoppet_over_uten_strom_org: utenStromOrg ?? 0,
     funnet,
     ikke_funnet: ikkeFunnet,
     feilet,

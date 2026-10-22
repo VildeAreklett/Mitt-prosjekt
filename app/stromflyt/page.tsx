@@ -1432,6 +1432,12 @@ export default function StromflytPage() {
   async function sjekkEnMaalerICloud(r: Malepunkt): Promise<
     { ok: true; funnet: false; merknad?: string } | { ok: true; funnet: true; melding: string } | { ok: false; error: string }
   > {
+    // Uten strøm-org prøves bare det delte tokenet direkte (som Cloud avviser
+    // med 401) - raden kan aldri finnes. Si det rett ut i stedet for en
+    // kryptisk HTTP-feil.
+    if (!(r.cloud_org || "").trim()) {
+      return { ok: false, error: `${r.bygg}: mangler strøm-org - sett den først (bulk: «Sett X sin strøm-org»)` };
+    }
     try {
       const headers = await stromflytAuthHeaders();
       const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "", bygg: r.bygg || "" });
