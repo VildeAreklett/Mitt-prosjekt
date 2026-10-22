@@ -20,6 +20,8 @@
 // Se apiserver (Adaptic Cloud) sin InternalOrganizationsController og
 // MetricController for hvordan dette er bygget opp der.
 
+import { CLOUD_ORGS_FALLBACK } from "./cloud-orgs-fallback";
+
 const CLOUD_API_BASE = process.env.ADAPTIC_CLOUD_API_BASE_URL || "https://api.adaptic.no";
 
 interface CloudMeter {
@@ -131,10 +133,16 @@ function rensToken(raw: string | undefined): string | undefined {
 async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise<MethodResult> {
   const metode = "minted et nytt token via organisasjonen";
   const orgsRes = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
-  if (!orgsRes.ok || !Array.isArray(orgsRes.body)) {
-    return { metode, metrics: null, info: `organisasjonsliste avvist (HTTP ${orgsRes.status})` };
+  let orgs: CloudOrg[];
+  let listeKilde = "";
+  if (orgsRes.ok && Array.isArray(orgsRes.body)) {
+    orgs = orgsRes.body as CloudOrg[];
+  } else {
+    // Tokenet får ikke liste organisasjoner - bruk den faste id-listen og
+    // prøv å minte direkte (det er det admin-tokenet er laget for).
+    orgs = CLOUD_ORGS_FALLBACK;
+    listeKilde = ` (organisasjonslisten avvist HTTP ${orgsRes.status}, brukte fast liste)`;
   }
-  const orgs = orgsRes.body as CloudOrg[];
 
   const needle = normalizeOrgName(cloudOrgName);
   const exact = orgs.find((o) => normalizeOrgName(o.name) === needle);
@@ -143,7 +151,7 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
     return n.includes(needle) || needle.includes(n);
   });
   if (fuzzy.length === 0) {
-    return { metode, metrics: null, info: `fant ${orgs.length} organisasjoner totalt, ingen matcher «${cloudOrgName}»` };
+    return { metode, metrics: null, info: `fant ${orgs.length} organisasjoner totalt, ingen matcher «${cloudOrgName}»${listeKilde}` };
   }
   if (fuzzy.length > 1) {
     return { metode, metrics: null, info: `${fuzzy.length} organisasjoner matcher «${cloudOrgName}» (${fuzzy.map((o) => o.name).join(", ")}) - for usikkert` };
@@ -156,7 +164,7 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
     cache: "no-store",
   });
   if (!mintRes.ok) {
-    return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», men minting feilet (HTTP ${mintRes.status})` };
+    return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», men minting feilet (HTTP ${mintRes.status})${listeKilde}` };
   }
   const mintData = (await mintRes.json().catch(() => null)) as { token: string } | null;
   if (!mintData?.token) {
@@ -195,7 +203,10 @@ const orgMetricsCache = new Map<string, { t: number; token: string; metrics: Clo
 async function hentOrgListe(adminToken: string): Promise<CloudOrg[] | null> {
   if (orgListeCache && Date.now() - orgListeCache.t < ORG_CACHE_MS) return orgListeCache.orgs;
   const r = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
-  if (!r.ok || !Array.isArray(r.body)) return null;
+  if (!r.ok || !Array.isArray(r.body)) {
+    orgListeCache = { t: Date.now(), orgs: CLOUD_ORGS_FALLBACK };
+    return orgListeCache.orgs;
+  }
   orgListeCache = { t: Date.now(), orgs: r.body as CloudOrg[] };
   return orgListeCache.orgs;
 }
@@ -466,8 +477,8 @@ export async function hentTokenForOrg(cloudOrgName: string): Promise<{ ok: true;
   // HVILKEN, og prøver heller alltid minting via org-navnet først, siden det
   // er den tolkningen som faktisk har vist seg å fungere i praksis.
   const orgsRes = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
-  if (orgsRes.ok && Array.isArray(orgsRes.body)) {
-    const orgs = orgsRes.body as CloudOrg[];
+  {
+    const orgs = orgsRes.ok && Array.isArray(orgsRes.body) ? (orgsRes.body as CloudOrg[]) : CLOUD_ORGS_FALLBACK;
     const needle = normalizeOrgName(cloudOrgName);
     const exact = orgs.find((o) => normalizeOrgName(o.name) === needle);
     const fuzzy = exact ? [exact] : orgs.filter((o) => {
