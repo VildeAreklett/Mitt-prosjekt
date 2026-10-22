@@ -107,7 +107,22 @@ async function tryDirectToken(token: string): Promise<MethodResult> {
   if (r.ok && Array.isArray(r.body)) {
     return { metode: "tokenet brukt direkte", metrics: r.body as CloudMetric[], info: `${r.body.length} målere hentet`, token };
   }
+  // Noen Cloud-oppsett vil ha nøkkelen i X-Api-Key i stedet for Bearer.
+  if (r.status === 401 || r.status === 403) {
+    const k = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { "X-Api-Key": token });
+    if (k.ok && Array.isArray(k.body)) {
+      return { metode: "tokenet brukt som X-Api-Key", metrics: k.body as CloudMetric[], info: `${k.body.length} målere hentet` };
+    }
+    return { metode: "tokenet brukt direkte", metrics: null, info: `avvist (Bearer: HTTP ${r.status}, X-Api-Key: HTTP ${k.status})` };
+  }
   return { metode: "tokenet brukt direkte", metrics: null, info: `avvist (HTTP ${r.status})` };
+}
+
+// Tokenet limes ofte inn med linjeskift/mellomrom på slutten eller med
+// «Bearer » foran - begge gir 401 selv om selve tokenet er gyldig.
+function rensToken(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  return raw.trim().replace(/^bearer\s+/i, "").replace(/^["']|["']$/g, "").trim();
 }
 
 // Tolkning 1: tokenet er et admin-token som må brukes til å "minte" et nytt,
@@ -286,11 +301,15 @@ export async function slaOppMalepunktICloud(
     return { ok: false, error: "malepunkt_id må være 18 siffer" };
   }
 
-  const adminToken = process.env.ADAPTIC_CLOUD_ADMIN_TOKEN;
-  const apiKey = process.env.ADAPTIC_CLOUD_API_KEY;
+  const rawAdmin = process.env.ADAPTIC_CLOUD_ADMIN_TOKEN;
+  const adminToken = rensToken(rawAdmin);
+  const apiKey = rensToken(process.env.ADAPTIC_CLOUD_API_KEY);
 
   try {
     const diagnostikk: string[] = [];
+    if (!adminToken) diagnostikk.push("ADAPTIC_CLOUD_ADMIN_TOKEN er ikke satt i miljøvariablene");
+    else if (rawAdmin !== adminToken) diagnostikk.push("(tokenet hadde mellomrom/linjeskift/«Bearer» rundt seg - renset)");
+    else diagnostikk.push(`(token lest: ${adminToken.length} tegn)`);
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
     let funnetOrgNavn: string | null = null;
@@ -439,7 +458,7 @@ interface TimeseriesPoint { timestamp?: string; ts?: string; value: number | nul
 // mange målepunkt PER organisasjon og bare trenger token én gang per
 // gruppe, ikke én gang per målepunkt.
 export async function hentTokenForOrg(cloudOrgName: string): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
-  const adminToken = process.env.ADAPTIC_CLOUD_ADMIN_TOKEN;
+  const adminToken = rensToken(process.env.ADAPTIC_CLOUD_ADMIN_TOKEN);
   if (!adminToken) return { ok: false, error: "Mangler ADAPTIC_CLOUD_ADMIN_TOKEN" };
 
   // Direktetokenet dekker som regel bare én organisasjon (det som ble brukt
