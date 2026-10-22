@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { slaOppMalepunktICloud, hentTokenForOrg, hentEstimertAarsforbruk } from "../../../../lib/cloud-lookup";
+import { velgForbruk } from "../../../../lib/forbruk-prognose";
 import { STAGES, type Status } from "../../../../lib/stromflyt-config";
 
 // Daglig automatisk Cloud-sjekk (Vercel Cron, se vercel.json) - gjør akkurat
@@ -57,8 +58,8 @@ export async function GET(req: Request) {
   {
     const r1 = await supabase
       .from(TABLE)
-      .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh, forbruk_kilde, forbruk_oppdatert")
-      .or(`status.neq.Aktiv,aarsforbruk_kwh.is.null,and(forbruk_kilde.eq.cloud,forbruk_oppdatert.lt.${syvDagerSiden}),and(forbruk_kilde.eq.cloud,forbruk_oppdatert.is.null)`)
+      .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh, forbruk_kilde, forbruk_oppdatert, forbruk_entelios_kwh")
+      .or(`status.neq.Aktiv,aarsforbruk_kwh.is.null,and(forbruk_kilde.in.(cloud,entelios),forbruk_oppdatert.lt.${syvDagerSiden}),and(forbruk_kilde.in.(cloud,entelios),forbruk_oppdatert.is.null)`)
       .neq("status", "På vent")
       .not("maalepunkt_id", "is", null)
       .order("updated_at", { ascending: true }); // eldst sjekket først
@@ -134,8 +135,11 @@ export async function GET(req: Request) {
     }
     // Fylles inn når tomt, og oppdateres når tallet tidligere kom fra Cloud.
     // Tall lagt inn for hånd (forbruk_kilde tom) overskrives aldri.
-    const kanOppdatereForbruk = rad.aarsforbruk_kwh == null || (harForbrukKolonner && rad.forbruk_kilde === "cloud");
-    if (kanOppdatereForbruk && result.sikkerIdentitet) {
+    // Cloud-tallet lagres alltid som alternativ (kontroll); det som vises som
+    // årsforbruk byttes bare når raden ikke er satt for hånd.
+    const kanOppdatereForbruk = rad.aarsforbruk_kwh == null || (harForbrukKolonner && (rad.forbruk_kilde === "cloud" || rad.forbruk_kilde === "entelios"));
+    const trengerForbruk = kanOppdatereForbruk || (harForbrukKolonner && rad.forbruk_kilde == null);
+    if (trengerForbruk && result.sikkerIdentitet) {
       // Samme tilgang som fant måleren først, deretter org-token som reserve.
       const tokens: string[] = [];
       if (result.token_brukt) tokens.push(result.token_brukt);
@@ -152,13 +156,21 @@ export async function GET(req: Request) {
         try {
           const f = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
           if (f.ok) {
-            patch.aarsforbruk_kwh = Math.round(f.kwh);
             if (harForbrukKolonner) {
-              patch.forbruk_kilde = "cloud";
+              patch.forbruk_cloud_kwh = Math.round(f.kwh);
               patch.forbruk_maaneder = f.prognose.maaneder;
               patch.forbruk_fra = f.prognose.fra;
               patch.forbruk_til = f.prognose.til;
               patch.forbruk_oppdatert = new Date().toISOString();
+            }
+            if (kanOppdatereForbruk) {
+              const valg = velgForbruk({
+                cloud_kwh: f.kwh,
+                cloud_maaneder: f.prognose.maaneder,
+                entelios_kwh: harForbrukKolonner ? (rad.forbruk_entelios_kwh as number | null | undefined) : null,
+              });
+              patch.aarsforbruk_kwh = Math.round(valg.kwh ?? f.kwh);
+              if (harForbrukKolonner) patch.forbruk_kilde = valg.kilde ?? "cloud";
             }
             oppdatertForbruk += 1;
             break;

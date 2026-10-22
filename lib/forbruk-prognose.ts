@@ -90,3 +90,46 @@ export function beregnPrognose(punkter: MaanedPunkt[], naa: Date = new Date()): 
     sikkerhet: sikkerhetForMaaneder(siste12.length),
   };
 }
+
+
+// ---------- Velg beste kilde når flere tall finnes ----------
+//
+// Hver måler kan ha to uavhengige anslag på årsforbruk:
+//  * Cloud: målt 12 mnd, eller sesongjustert prognose fra færre måneder
+//  * Entelios: «Venta forbruk» i anleggslisten (historikk fra Elhub)
+// Begge lagres på raden, og det som vises er det beste av dem:
+//  * Cloud har 12 mnd målt  -> Cloud (faktisk)
+//  * Cloud har 6-11 mnd      -> Cloud-prognose (Entelios beholdes som kontroll)
+//  * Cloud har under 6 mnd   -> Entelios hvis den har tall > 0, ellers Cloud-prognose
+//  * bare ett av dem finnes  -> det
+// Er de to mer enn 40 % ulike, flagges det som avvik - da bør noen se på måleren.
+
+export const AVVIK_GRENSE = 0.4;
+
+export type ForbrukKilde = "cloud" | "entelios";
+
+export interface ForbrukValg {
+  kwh: number | null;
+  kilde: ForbrukKilde | null;
+  avvik: boolean;
+}
+
+export function velgForbruk(inn: {
+  cloud_kwh: number | null | undefined;
+  cloud_maaneder: number | null | undefined;
+  entelios_kwh: number | null | undefined;
+}): ForbrukValg {
+  const cloud = typeof inn.cloud_kwh === "number" ? inn.cloud_kwh : null;
+  const mnd = inn.cloud_maaneder ?? 0;
+  const ent = typeof inn.entelios_kwh === "number" && inn.entelios_kwh > 0 ? inn.entelios_kwh : null;
+
+  let avvik = false;
+  if (cloud !== null && cloud > 0 && ent !== null) {
+    avvik = Math.abs(cloud - ent) / Math.max(cloud, ent) > AVVIK_GRENSE;
+  }
+
+  if (cloud !== null && mnd >= 6) return { kwh: cloud, kilde: "cloud", avvik };
+  if (ent !== null) return { kwh: ent, kilde: "entelios", avvik };
+  if (cloud !== null) return { kwh: cloud, kilde: "cloud", avvik };
+  return { kwh: null, kilde: null, avvik: false };
+}

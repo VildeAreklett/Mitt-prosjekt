@@ -43,6 +43,7 @@ import {
 import type { ParsedAvtale } from "../../lib/avtale-parser";
 import type { ParsedExcelWorkbook, ParsedExcelRow, ParsedExcelSheet } from "../../lib/excel-parser";
 import type { ParsedFakturaRow } from "../../lib/faktura-parser";
+import { velgForbruk, AVVIK_GRENSE } from "../../lib/forbruk-prognose";
 import { prisomradeFromPostnr } from "../../lib/geo";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -61,17 +62,30 @@ const excelGroupKey = (r: ParsedExcelRow) =>
 // Merke for årsforbruk som er beregnet fra Cloud: «12 mnd» = målt helår, færre
 // måneder = sesongjustert prognose (se lib/forbruk-prognose.ts).
 function forbrukMerke(r: Malepunkt): { tekst: string; tittel: string; klasse: string } | null {
-  if (r.forbruk_kilde !== "cloud" || !r.forbruk_maaneder) return null;
+  const cloud = r.forbruk_cloud_kwh ?? (r.forbruk_kilde === "cloud" ? r.aarsforbruk_kwh : null);
+  const ent = r.forbruk_entelios_kwh ?? null;
+  const avvik = !!cloud && !!ent && Math.abs(cloud - ent) / Math.max(cloud, ent) > AVVIK_GRENSE;
+  const alt = [
+    cloud != null && r.forbruk_maaneder ? `Cloud: ${fmt(cloud)} kWh (${r.forbruk_maaneder} mnd)` : null,
+    ent != null ? `Entelios (Elhub-historikk): ${fmt(ent)} kWh` : null,
+  ].filter(Boolean).join(" · ");
+  const varsel = avvik ? ` ADVARSEL: kildene avviker mer enn ${Math.round(AVVIK_GRENSE * 100)} % - bør kontrolleres.` : "";
+  if (r.forbruk_kilde === "entelios") {
+    return { tekst: avvik ? "Entelios ⚠" : "Entelios", klasse: `forbruk-merke entelios${avvik ? " avvik" : ""}`, tittel: `Forventet årsforbruk fra Entelios (Elhub-historikk), brukt fordi Cloud har for lite data. ${alt}.${varsel}` };
+  }
+  if (r.forbruk_kilde !== "cloud" || !r.forbruk_maaneder) {
+    return avvik ? { tekst: "⚠", klasse: "forbruk-merke avvik", tittel: `Tall satt for hånd. ${alt}.${varsel}` } : null;
+  }
   const n = r.forbruk_maaneder;
   const periode = r.forbruk_fra && r.forbruk_til ? ` (${r.forbruk_fra} - ${r.forbruk_til})` : "";
   if (n >= 12) {
-    return { tekst: "12 mnd", klasse: "forbruk-merke malt", tittel: `Målt forbruk siste 12 hele måneder fra Adaptic Cloud${periode}. Oppdateres automatisk.` };
+    return { tekst: avvik ? "12 mnd ⚠" : "12 mnd", klasse: `forbruk-merke malt${avvik ? " avvik" : ""}`, tittel: `Målt forbruk siste 12 hele måneder fra Adaptic Cloud${periode}. Oppdateres automatisk. ${alt}.${varsel}` };
   }
   const sikkerhet = n >= 6 ? "middels sikkerhet" : n >= 3 ? "lav sikkerhet" : "svært usikker";
   return {
-    tekst: `${n} mnd`,
-    klasse: `forbruk-merke prognose${n < 3 ? " svaert-lav" : n < 6 ? " lav" : ""}`,
-    tittel: `Prognose: bare ${n} hele måneders måling i Cloud${periode}, sesongjustert til helår (${sikkerhet}). Oppdateres automatisk etter hvert som det kommer mer data.`,
+    tekst: avvik ? `${n} mnd ⚠` : `${n} mnd`,
+    klasse: `forbruk-merke prognose${n < 3 ? " svaert-lav" : n < 6 ? " lav" : ""}${avvik ? " avvik" : ""}`,
+    tittel: `Prognose: bare ${n} hele måneders måling i Cloud${periode}, sesongjustert til helår (${sikkerhet}). Oppdateres automatisk etter hvert som det kommer mer data. ${alt}.${varsel}`,
   };
 }
 
@@ -563,6 +577,26 @@ export default function StromflytPage() {
     // bestilling), som normalt er et større tall.
     const gwhSolgtTotalt = sumKwh(alle) / 1_000_000;
     const solgtUtenForbruk = alle.filter((r) => !r.aarsforbruk_kwh).length;
+    // Hvor solid er volumtallet? Hver måler plasseres i ÉN kategori etter
+    // hvor årsforbruket kommer fra - slik at prognosen kan vurderes ærlig.
+    const kategorier = [
+      { key: "malt", navn: "Målt, 12 mnd i Cloud", tillit: "Høy", test: (r: Malepunkt) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 0) >= 12 },
+      { key: "mid", navn: "Cloud-prognose, 6-11 mnd", tillit: "Middels", test: (r: Malepunkt) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 0) >= 6 && (r.forbruk_maaneder ?? 0) < 12 },
+      { key: "ent", navn: "Forventet fra Entelios (Elhub-historikk)", tillit: "Middels", test: (r: Malepunkt) => r.forbruk_kilde === "entelios" },
+      { key: "lav", navn: "Cloud-prognose, 3-5 mnd", tillit: "Lav", test: (r: Malepunkt) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 0) >= 3 && (r.forbruk_maaneder ?? 0) < 6 },
+      { key: "svaert", navn: "Cloud-prognose, under 3 mnd", tillit: "Svært lav", test: (r: Malepunkt) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 0) < 3 },
+      { key: "manuell", navn: "Lagt inn for hånd / fra avtale", tillit: "Ukjent", test: (r: Malepunkt) => !r.forbruk_kilde && !!r.aarsforbruk_kwh },
+      { key: "mangler", navn: "Mangler årsforbruk", tillit: "-", test: (r: Malepunkt) => !r.aarsforbruk_kwh },
+    ];
+    const forbruksgrunnlag = kategorier.map((k) => {
+      const lst = alle.filter(k.test);
+      return { key: k.key, navn: k.navn, tillit: k.tillit, antall: lst.length, gwh: sumKwh(lst) / 1_000_000 };
+    });
+    const avvikAntall = alle.filter((r) => {
+      const c = r.forbruk_cloud_kwh ?? (r.forbruk_kilde === "cloud" ? r.aarsforbruk_kwh : null);
+      const e = r.forbruk_entelios_kwh;
+      return !!c && !!e && Math.abs(c - e) / Math.max(c, e) > AVVIK_GRENSE;
+    }).length;
     const prognoseRader = alle.filter((r) => r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 12) < 12);
     const prognoseAntall = prognoseRader.length;
     const gwhPrognose = sumKwh(prognoseRader) / 1_000_000;
@@ -573,7 +607,7 @@ export default function StromflytPage() {
     return {
       total: alle.length, trenger, eierskifte, spotavtale, ikkeAvklart, nyeDenneUken,
       gwhRegistrert, gwhBekreftet, registrertAntall: registrertHosEntelios.length, registrertUtenForbruk,
-      gwhSolgtTotalt, solgtUtenForbruk, prognoseAntall, gwhPrognose,
+      gwhSolgtTotalt, solgtUtenForbruk, prognoseAntall, gwhPrognose, forbruksgrunnlag, avvikAntall,
     };
   }, [rows]);
 
@@ -1511,16 +1545,25 @@ export default function StromflytPage() {
       // Fylles inn når feltet er tomt, og oppdateres på nytt når tallet tidligere
       // kom fra Cloud (flere måneders data gir bedre prognose). Tall lagt inn
       // for hånd overskrives aldri.
-      const kanOppdatereForbruk = r.aarsforbruk_kwh == null || r.forbruk_kilde === "cloud";
-      if (data.forbruk_prognose && kanOppdatereForbruk) {
+      const kanOppdatereForbruk = r.aarsforbruk_kwh == null || r.forbruk_kilde === "cloud" || r.forbruk_kilde === "entelios";
+      if (data.forbruk_prognose) {
         const p = data.forbruk_prognose as { aarskwh: number; maaneder: number; fra: string | null; til: string | null };
-        detaljer.aarsforbruk_kwh = p.aarskwh;
-        detaljer.forbruk_kilde = "cloud";
+        // Cloud-tallet lagres ALLTID som alternativ (også når raden har et tall
+        // lagt inn for hånd), slik at avvik kan ses. Det som vises som
+        // årsforbruk byttes bare når raden ikke er satt for hånd.
+        detaljer.forbruk_cloud_kwh = p.aarskwh;
         detaljer.forbruk_maaneder = p.maaneder;
         detaljer.forbruk_fra = p.fra;
         detaljer.forbruk_til = p.til;
         detaljer.forbruk_oppdatert = new Date().toISOString();
-        forbrukMelding = `, årsforbruk ${fmt(p.aarskwh)} kWh (${p.maaneder >= 12 ? "målt 12 mnd" : `prognose fra ${p.maaneder} mnd`})`;
+        if (kanOppdatereForbruk) {
+          const valg = velgForbruk({ cloud_kwh: p.aarskwh, cloud_maaneder: p.maaneder, entelios_kwh: r.forbruk_entelios_kwh });
+          detaljer.aarsforbruk_kwh = valg.kwh ?? p.aarskwh;
+          detaljer.forbruk_kilde = valg.kilde ?? "cloud";
+          forbrukMelding = `, årsforbruk ${fmt(detaljer.aarsforbruk_kwh)} kWh (${valg.kilde === "entelios" ? `forventet fra Entelios, Cloud-prognose ${fmt(p.aarskwh)} fra ${p.maaneder} mnd` : p.maaneder >= 12 ? "målt 12 mnd" : `prognose fra ${p.maaneder} mnd`}${valg.avvik ? " - AVVIK mellom kildene" : ""})`;
+        } else {
+          forbrukMelding = `, Cloud-tall ${fmt(p.aarskwh)} kWh (${p.maaneder} mnd) lagret som kontroll - beholdt tallet som er satt for hånd`;
+        }
       } else if (r.aarsforbruk_kwh == null && data.forbruk_feil) {
         forbrukMelding = `, årsforbruk ikke hentet (${data.forbruk_feil})`;
       }
@@ -1696,17 +1739,27 @@ export default function StromflytPage() {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(await file.arrayBuffer());
       const ids = new Set<string>();
+      // Forventet årsforbruk («Venta forbruk», fra Elhub-historikk) per MålepunktID.
+      const ventaForbruk = new Map<string, number>();
       for (const ws of wb.worksheets) {
-        let col = 0, headerRow = 0;
+        let col = 0, headerRow = 0, ventaCol = 0;
         for (let r = 1; r <= Math.min(ws.rowCount, 10) && !col; r++) {
           ws.getRow(r).eachCell((cell, c) => {
-            if (!col && /^(ean|målepunkt\s?-?\s?id|malepunkt\s?-?\s?id|målepunktsid)/i.test(String(cell.value ?? "").trim())) { col = c; headerRow = r; }
+            const t = String(cell.value ?? "").trim();
+            if (!col && /^(ean|målepunkt\s?-?\s?id|malepunkt\s?-?\s?id|målepunktsid)/i.test(t)) { col = c; headerRow = r; }
+            if (!ventaCol && /^(venta|ventet|forventet)\s*forbruk/i.test(t)) ventaCol = c;
           });
         }
         if (!col) continue;
         for (let r = headerRow + 1; r <= ws.rowCount; r++) {
           const v = String(ws.getRow(r).getCell(col).value ?? "").replace(/\D/g, "");
-          if (v.length === 18) ids.add(v);
+          if (v.length !== 18) continue;
+          ids.add(v);
+          if (ventaCol) {
+            const raw = ws.getRow(r).getCell(ventaCol).value;
+            const n = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/\s/g, "").replace(",", "."));
+            if (Number.isFinite(n) && n > 0) ventaForbruk.set(v, Math.max(ventaForbruk.get(v) ?? 0, Math.round(n)));
+          }
         }
       }
       if (!ids.size) { flash("Fant ingen MålepunktID-er i filen", "Forventer en kolonne som heter EAN eller MålepunktID"); return; }
@@ -1720,11 +1773,36 @@ export default function StromflytPage() {
         `• ${tilBekreftet.length} settes til «Registrert hos Entelios»\n` +
         `• ${ikkeIRegister.length} står på listen men finnes ikke i Strømflyt\n` +
         `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n\nFortsette?`;
-      if (!tilBekreftet.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
-      if (!window.confirm(sammendrag)) return;
-      await updateStatuses(tilBekreftet.map((r) => r.id), "Bekreftet");
+      // Forventet forbruk fra Entelios: lagres som alternativ på raden, og blir
+      // årsforbruket når det er beste kilde (se velgForbruk). Tall lagt inn for
+      // hånd (ingen forbruk_kilde) overskrives aldri.
+      const forbrukOppdateringer: { r: Malepunkt; patch: Partial<Malepunkt> }[] = [];
+      for (const r of rows) {
+        const venta = ventaForbruk.get(r.maalepunkt_id.trim());
+        if (!venta || r.forbruk_entelios_kwh === venta) continue;
+        const valg = velgForbruk({
+          cloud_kwh: r.forbruk_cloud_kwh ?? (r.forbruk_kilde === "cloud" ? r.aarsforbruk_kwh : null),
+          cloud_maaneder: r.forbruk_maaneder,
+          entelios_kwh: venta,
+        });
+        const patch: Partial<Malepunkt> = { forbruk_entelios_kwh: venta };
+        const kanOverskrive = r.aarsforbruk_kwh == null || r.forbruk_kilde === "cloud" || r.forbruk_kilde === "entelios";
+        if (kanOverskrive && valg.kwh != null) {
+          patch.aarsforbruk_kwh = valg.kwh;
+          patch.forbruk_kilde = valg.kilde;
+          patch.forbruk_oppdatert = new Date().toISOString();
+        }
+        forbrukOppdateringer.push({ r, patch });
+      }
+      const sammendrag2 = sammendrag.replace("\n\nFortsette?", `\n• ${forbrukOppdateringer.length} får forventet årsforbruk fra Entelios lagret\n\nFortsette?`);
+      if (!tilBekreftet.length && !forbrukOppdateringer.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
+      if (!window.confirm(sammendrag2)) return;
+      if (tilBekreftet.length) await updateStatuses(tilBekreftet.map((r) => r.id), "Bekreftet");
+      for (let i = 0; i < forbrukOppdateringer.length; i += 6) {
+        await Promise.all(forbrukOppdateringer.slice(i, i + 6).map(({ r, patch }) => updateMalepunktDetails(r.id, patch).catch(() => undefined)));
+      }
       await refresh();
-      flash(`${tilBekreftet.length} målepunkt satt til registrert hos Entelios`, `${ikkeIRegister.length} på listen mangler i Strømflyt · ${bekreftetUtenListe.length} mangler på listen`);
+      flash(`${tilBekreftet.length} satt til registrert hos Entelios · ${forbrukOppdateringer.length} fikk forventet forbruk`, `${ikkeIRegister.length} på listen mangler i Strømflyt · ${bekreftetUtenListe.length} mangler på listen`);
     } catch (e: any) {
       flash("Kunne ikke avstemme: " + (e.message ?? e));
     }
@@ -2563,6 +2641,29 @@ export default function StromflytPage() {
                 sub={`anslag, alle ${tiles.total} - uansett status · ${tiles.solgtUtenForbruk > 0 ? `${tiles.solgtUtenForbruk} mangler årsforbruk` : "alle har årsforbruk"}${tiles.prognoseAntall > 0 ? ` · ${tiles.prognoseAntall} er prognose fra under 12 mnd (${tiles.gwhPrognose.toFixed(2)} GWh)` : ""}`}
                 alert={tiles.solgtUtenForbruk > 0}
               />
+            </div>
+
+            <div className="panel forbruksgrunnlag">
+              <div className="hd">
+                <div>
+                  <h2>Forbruksgrunnlag</h2>
+                  <span className="sub">Hvor solid er volumtallet? Hver måler telles én gang, etter hvor årsforbruket kommer fra{tiles.avvikAntall > 0 ? ` · ${tiles.avvikAntall} måler${tiles.avvikAntall === 1 ? "" : "e"} der Cloud og Entelios avviker mer enn ${Math.round(AVVIK_GRENSE * 100)} %` : ""}</span>
+                </div>
+              </div>
+              <table className="grunnlag-tabell">
+                <thead><tr><th>Kilde</th><th className="num">Målere</th><th className="num">GWh</th><th className="num">Andel</th><th>Tillit</th></tr></thead>
+                <tbody>
+                  {tiles.forbruksgrunnlag.map((g) => (
+                    <tr key={g.key}>
+                      <td>{g.navn}</td>
+                      <td className="num">{g.antall}</td>
+                      <td className="num">{g.gwh.toFixed(2)}</td>
+                      <td className="num">{tiles.gwhSolgtTotalt > 0 ? `${Math.round((g.gwh / tiles.gwhSolgtTotalt) * 100)} %` : "-"}</td>
+                      <td>{g.tillit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             <div className="overview-2col">
@@ -3533,7 +3634,14 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-kladd{color:var(--sf-ink-2);background:var(--sf-surface-2)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
 .forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
+.forbruksgrunnlag{margin-bottom:18px}
+.grunnlag-tabell{width:100%;border-collapse:collapse;font-size:13px}
+.grunnlag-tabell th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-ink-3);font-weight:600;text-align:left;padding:8px 18px}
+.grunnlag-tabell td{padding:8px 18px;border-top:1px solid var(--sf-border)}
+.grunnlag-tabell .num{text-align:right;font-variant-numeric:tabular-nums}
 .forbruk-merke.malt{color:var(--sf-ink-2);background:var(--sf-surface-2)}
+.forbruk-merke.entelios{color:#1d5f8a;background:#e1f0fa}
+.forbruk-merke.avvik{box-shadow:inset 0 0 0 1px #c0392b}
 .forbruk-merke.prognose{color:#8a5a00;background:#fdf1d6}
 .forbruk-merke.prognose.lav{color:#9a4a00;background:#fde6cc}
 .forbruk-merke.prognose.svaert-lav{color:#a12a2a;background:#fbe0e0}

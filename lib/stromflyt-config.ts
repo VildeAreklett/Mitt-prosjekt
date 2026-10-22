@@ -104,6 +104,10 @@ export interface Malepunkt {
   forbruk_fra?: string | null;
   forbruk_til?: string | null;
   forbruk_oppdatert?: string | null;
+  // Begge anslagene lagres (migration-014): det som vises i aarsforbruk_kwh er
+  // beste kilde etter velgForbruk() i lib/forbruk-prognose.ts.
+  forbruk_cloud_kwh?: number | null;
+  forbruk_entelios_kwh?: number | null;
   created_at?: string;
   updated_at?: string;
 }
