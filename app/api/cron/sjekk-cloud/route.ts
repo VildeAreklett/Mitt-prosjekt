@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { slaOppMalepunktICloud } from "../../../../lib/cloud-lookup";
+import { slaOppMalepunktICloud, hentTokenForOrg, hentEstimertAarsforbruk } from "../../../../lib/cloud-lookup";
 import { STAGES, type Status } from "../../../../lib/stromflyt-config";
 
 // Daglig automatisk Cloud-sjekk (Vercel Cron, se vercel.json) - gjør akkurat
@@ -44,12 +44,14 @@ export async function GET(req: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Kun rader som faktisk kan sjekkes (MålepunktID og cloud_org satt) og som
-  // ikke allerede er "Aktiv" - ingenting mer å oppdage der.
+  // Kun rader som faktisk kan sjekkes (MålepunktID og cloud_org satt). Rader
+  // som allerede er "Aktiv" tas bare med når årsforbruk mangler - da skal det
+  // hentes fra Cloud (ingenting annet å oppdage for dem).
   const { data: rows, error: fetchError } = await supabase
     .from(TABLE)
-    .select("id, bygg, maalepunkt_id, cloud_org, status, tsdb_id")
-    .neq("status", "Aktiv")
+    .select("id, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh")
+    .or("status.neq.Aktiv,aarsforbruk_kwh.is.null")
+    .neq("status", "På vent")
     .not("maalepunkt_id", "is", null)
     .not("cloud_org", "is", null)
     .neq("cloud_org", "")
@@ -63,7 +65,8 @@ export async function GET(req: Request) {
   const utvalg = alle.slice(0, MAKS_RADER_PER_KJORING);
   const droppet = alle.length - utvalg.length;
 
-  let funnet = 0, oppdatertStatus = 0, oppdatertTsdbId = 0, ikkeFunnet = 0, feilet = 0;
+  let funnet = 0, oppdatertStatus = 0, oppdatertTsdbId = 0, oppdatertForbruk = 0, ikkeFunnet = 0, feilet = 0;
+  const tokenPerOrg = new Map<string, string | null>();
   const feilmeldinger: string[] = [];
 
   for (const rad of utvalg) {
@@ -101,6 +104,29 @@ export async function GET(req: Request) {
       patch.tsdb_id = result.tsdb_id;
       oppdatertTsdbId += 1;
     }
+    // Hent estimert årsforbruk fra faktiske måledata når raden mangler det
+    // (gjelder også "Satt opp i Cloud"/"Aktiv", som ellers aldri fikk
+    // forbruk fylt inn). Kun ved sikker identitet - et bygningsnavn-treff
+    // kan gi forbruket til en annen måler i samme bygg.
+    if (rad.aarsforbruk_kwh == null && result.sikkerIdentitet) {
+      const org = (rad.cloud_org as string) || "";
+      if (!tokenPerOrg.has(org)) {
+        const t = await hentTokenForOrg(org);
+        tokenPerOrg.set(org, t.ok ? t.token : null);
+      }
+      const token = tokenPerOrg.get(org);
+      if (token) {
+        try {
+          const f = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
+          if (f.ok && f.kwh > 0) {
+            patch.aarsforbruk_kwh = Math.round(f.kwh);
+            oppdatertForbruk += 1;
+          }
+        } catch {
+          // Forbruk er en bonus - ikke la det velte resten av kjøringen.
+        }
+      }
+    }
     if (Object.keys(patch).length > 0) {
       const { error: updateError } = await supabase.from(TABLE).update(patch).eq("id", rad.id);
       if (updateError) {
@@ -119,6 +145,7 @@ export async function GET(req: Request) {
     feilet,
     oppdatert_status: oppdatertStatus,
     oppdatert_tsdb_id: oppdatertTsdbId,
+    oppdatert_aarsforbruk: oppdatertForbruk,
     feilmeldinger: feilmeldinger.slice(0, 10),
   };
   // Logges i Vercel sine funksjonslogger, siden ingen ser dette i grensesnittet direkte.
