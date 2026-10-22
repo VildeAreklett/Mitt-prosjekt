@@ -322,7 +322,7 @@ export async function slaOppMalepunktICloud(
     const diagnostikk: string[] = [];
     if (!adminToken) diagnostikk.push("ADAPTIC_CLOUD_ADMIN_TOKEN er ikke satt i miljøvariablene");
     else if (rawAdmin !== adminToken) diagnostikk.push(`(tokenet hadde mellomrom/linjeskift/«Bearer» i seg - renset, ${rawAdmin?.length} -> ${adminToken.length} tegn)`);
-    else diagnostikk.push(`(token lest: ${adminToken.length} tegn)`);
+    else diagnostikk.push(`(token lest: ${adminToken.length} tegn, slutter på «${adminToken.slice(-3)}»)`);
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
     let funnetOrgNavn: string | null = null;
