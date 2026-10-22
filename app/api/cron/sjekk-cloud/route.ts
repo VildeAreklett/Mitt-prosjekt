@@ -113,18 +113,25 @@ export async function GET(req: Request) {
       patch.cloud_org = result.cloud_org_funnet;
     }
     if (rad.aarsforbruk_kwh == null && result.sikkerIdentitet) {
+      // Samme tilgang som fant måleren først, deretter org-token som reserve.
+      const tokens: string[] = [];
+      if (result.token_brukt) tokens.push(result.token_brukt);
       const org = (result.cloud_org_funnet || (rad.cloud_org as string) || "").trim();
-      if (!tokenPerOrg.has(org)) {
-        const t = await hentTokenForOrg(org);
-        tokenPerOrg.set(org, t.ok ? t.token : null);
+      if (org) {
+        if (!tokenPerOrg.has(org)) {
+          const t = await hentTokenForOrg(org);
+          tokenPerOrg.set(org, t.ok ? t.token : null);
+        }
+        const t2 = tokenPerOrg.get(org);
+        if (t2 && !tokens.includes(t2)) tokens.push(t2);
       }
-      const token = tokenPerOrg.get(org);
-      if (token) {
+      for (const token of tokens) {
         try {
           const f = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
           if (f.ok && f.kwh > 0) {
             patch.aarsforbruk_kwh = Math.round(f.kwh);
             oppdatertForbruk += 1;
+            break;
           }
         } catch {
           // Forbruk er en bonus - ikke la det velte resten av kjøringen.

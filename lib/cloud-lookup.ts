@@ -46,6 +46,9 @@ interface MethodResult {
   metrics: CloudMetric[] | null;
   info: string;
   orgNavn?: string;
+  // Bearer-token som faktisk ga tilgang til disse målerne - trengs for å hente
+  // forbruk med SAMME tilgang (måleren kan ligge i en annen org enn raden peker på).
+  token?: string;
 }
 
 export type CloudLookupResult =
@@ -76,6 +79,7 @@ export type CloudLookupResult =
       // den ikke er kjent (direktetoken/API-nøkkel). Brukes til å fylle inn
       // eller rette strøm-org på raden.
       cloud_org_funnet: string | null;
+      token_brukt: string | null;
     }
   | { ok: false; error: string };
 
@@ -101,7 +105,7 @@ async function fetchJson(url: string, headers: HeadersInit): Promise<{ ok: boole
 async function tryDirectToken(token: string): Promise<MethodResult> {
   const r = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { Authorization: `Bearer ${token}` });
   if (r.ok && Array.isArray(r.body)) {
-    return { metode: "tokenet brukt direkte", metrics: r.body as CloudMetric[], info: `${r.body.length} målere hentet` };
+    return { metode: "tokenet brukt direkte", metrics: r.body as CloudMetric[], info: `${r.body.length} målere hentet`, token };
   }
   return { metode: "tokenet brukt direkte", metrics: null, info: `avvist (HTTP ${r.status})` };
 }
@@ -151,6 +155,7 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
       metrics: metricsRes.body as CloudMetric[],
       info: `org «${fuzzy[0].name}» (id ${fuzzy[0].id}) - ${metricsRes.body.length} målere hentet`,
       orgNavn: fuzzy[0].name,
+      token: mintData.token,
     };
   }
   return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», minted token, men /v0/metrics avvist (HTTP ${metricsRes.status})` };
@@ -213,7 +218,7 @@ async function finnOrgMedMalepunkt(
   malepunktId: string,
   kundeNavn: string,
   diagnostikk: string[],
-): Promise<{ treff: { org: CloudOrg; metric: CloudMetric } | null; skannet: number }> {
+): Promise<{ treff: { org: CloudOrg; metric: CloudMetric; token: string } | null; skannet: number }> {
   const orgs = await hentOrgListe(adminToken);
   if (!orgs) { diagnostikk.push("automatisk org-søk: fikk ikke hentet organisasjonslisten"); return { treff: null, skannet: 0 }; }
 
@@ -222,7 +227,7 @@ async function finnOrgMedMalepunkt(
   for (const org of orgs) {
     const c = orgMetricsCache.get(org.id);
     const metric = c && Date.now() - c.t < ORG_CACHE_MS ? c.metrics.find(erMatch) : undefined;
-    if (metric) return { treff: { org, metric }, skannet: 1 };
+    if (metric) return { treff: { org, metric, token: c!.token }, skannet: 1 };
   }
   const skannetFraCache = orgs.filter((o) => {
     const c = orgMetricsCache.get(o.id);
@@ -252,7 +257,7 @@ async function finnOrgMedMalepunkt(
       if (!svar[j]) continue;
       sjekket += 1;
       const metric = svar[j]!.metrics.find(erMatch);
-      if (metric) return { treff: { org: batch[j], metric }, skannet: sjekket };
+      if (metric) return { treff: { org: batch[j], metric, token: svar[j]!.token }, skannet: sjekket };
     }
   }
   diagnostikk.push(`automatisk org-søk: lette i ${sjekket} av ${orgs.length} organisasjoner uten treff på MålepunktID`);
@@ -289,6 +294,8 @@ export async function slaOppMalepunktICloud(
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
     let funnetOrgNavn: string | null = null;
+    let tokenBrukt: string | null = null;
+    const tokenForMetric = new Map<string, string>();
     let harHattEtVellykketKall = false;
     // Samler ALLE hentede målere på tvers av metodene - MålepunktID
     // (eno-feltet i Cloud) stemmer ikke alltid nøyaktig med kildefilens
@@ -302,12 +309,14 @@ export async function slaOppMalepunktICloud(
       if (!result.metrics) return;
       harHattEtVellykketKall = true;
       alleMetrics.push(...result.metrics);
+      if (result.token) for (const m of result.metrics) tokenForMetric.set(m.id, result.token);
       if (treff) return; // allerede funnet via en tidligere metode
       const funnet = result.metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
       if (funnet) {
         treff = funnet;
         brukteMetode = result.metode;
         funnetOrgNavn = result.orgNavn ?? null;
+        tokenBrukt = result.token ?? null;
       }
     };
 
@@ -343,6 +352,7 @@ export async function slaOppMalepunktICloud(
         treff = auto.treff.metric;
         brukteMetode = `automatisk org-søk («${auto.treff.org.name}»)`;
         funnetOrgNavn = auto.treff.org.name;
+        tokenBrukt = auto.treff.token;
         diagnostikk.push(`automatisk org-søk: fant MålepunktID i organisasjonen «${auto.treff.org.name}»`);
       }
     }
@@ -404,6 +414,8 @@ export async function slaOppMalepunktICloud(
       metode: brukteMetode,
       sikkerIdentitet: !viaByggnavn,
       cloud_org_funnet: viaByggnavn ? null : funnetOrgNavn,
+      // KUN til intern bruk server-side (forbruksoppslag) - skal aldri sendes til nettleseren.
+      token_brukt: tokenBrukt ?? tokenForMetric.get(treff.id) ?? null,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "ukjent feil";

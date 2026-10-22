@@ -35,17 +35,26 @@ export async function GET(req: Request) {
   // når måleren først er funnet - feiler dette (f.eks. ingen data ennå),
   // skal ikke selve Cloud-oppslaget rammes. Se hentEstimertAarsforbruk.
   let estimert_aarsforbruk_kwh: number | null = null;
+  let forbruk_feil: string | null = null;
   if (result.funnet) {
     try {
-      // Bruk orgen måleren faktisk ble funnet i (kan avvike fra, eller mangle på, raden).
+      // Bruk SAMME tilgang som fant måleren (den kan ligge i en annen org enn
+      // raden peker på), og prøv ellers org-navnet.
+      const tokens: string[] = [];
+      if (result.token_brukt) tokens.push(result.token_brukt);
       const orgForToken = result.cloud_org_funnet || cloudOrgName;
-      const tokenRes = await hentTokenForOrg(orgForToken);
-      if (tokenRes.ok) {
-        const forbrukRes = await hentEstimertAarsforbruk(tokenRes.token, result.cloud_metric_id);
-        if (forbrukRes.ok && forbrukRes.kwh > 0) estimert_aarsforbruk_kwh = forbrukRes.kwh;
+      if (orgForToken) {
+        const tokenRes = await hentTokenForOrg(orgForToken);
+        if (tokenRes.ok && !tokens.includes(tokenRes.token)) tokens.push(tokenRes.token);
       }
-    } catch {
-      // Ignorer - årsforbruk er en bonus her, ikke en forutsetning.
+      if (!tokens.length) forbruk_feil = "fant ikke noe token som gir tilgang til måledata";
+      for (const token of tokens) {
+        const forbrukRes = await hentEstimertAarsforbruk(token, result.cloud_metric_id);
+        if (forbrukRes.ok && forbrukRes.kwh > 0) { estimert_aarsforbruk_kwh = forbrukRes.kwh; forbruk_feil = null; break; }
+        forbruk_feil = forbrukRes.ok ? "Cloud har ingen måledata siste 12 måneder på denne måleren" : forbrukRes.error;
+      }
+    } catch (e) {
+      forbruk_feil = e instanceof Error ? e.message : "ukjent feil";
     }
   }
 
@@ -67,9 +76,13 @@ export async function GET(req: Request) {
       foreslatt_status: null,
       metode: result.metode,
       estimert_aarsforbruk_kwh,
+      forbruk_feil,
       cloud_org_funnet: null,
     });
   }
 
-  return NextResponse.json({ ...result, estimert_aarsforbruk_kwh });
+  // token_brukt skal ALDRI til nettleseren.
+  const offentlig: Record<string, unknown> = { ...result };
+  delete offentlig.token_brukt;
+  return NextResponse.json({ ...offentlig, estimert_aarsforbruk_kwh, forbruk_feil });
 }

@@ -1491,6 +1491,8 @@ export default function StromflytPage() {
       if (data.estimert_aarsforbruk_kwh && r.aarsforbruk_kwh == null) {
         detaljer.aarsforbruk_kwh = data.estimert_aarsforbruk_kwh;
         forbrukMelding = `, estimert årsforbruk ${fmt(data.estimert_aarsforbruk_kwh)} kWh`;
+      } else if (r.aarsforbruk_kwh == null && data.forbruk_feil) {
+        forbrukMelding = `, årsforbruk ikke hentet (${data.forbruk_feil})`;
       }
       if (Object.keys(detaljer).length > 0) await updateMalepunktDetails(r.id, detaljer);
       return {
