@@ -45,6 +45,7 @@ interface MethodResult {
   metode: string;
   metrics: CloudMetric[] | null;
   info: string;
+  orgNavn?: string;
 }
 
 export type CloudLookupResult =
@@ -70,6 +71,11 @@ export type CloudLookupResult =
       // treffet bare skal brukes til et forbruksestimat (se
       // sjekk-malepunkt/route.ts og sjekkEnMaalerICloud).
       sikkerIdentitet: boolean;
+      // Organisasjonen i Cloud der måleren faktisk ble funnet (via org-navnet
+      // på raden, eller via automatisk søk i alle organisasjoner). null når
+      // den ikke er kjent (direktetoken/API-nøkkel). Brukes til å fylle inn
+      // eller rette strøm-org på raden.
+      cloud_org_funnet: string | null;
     }
   | { ok: false; error: string };
 
@@ -144,9 +150,113 @@ async function tryMintedToken(adminToken: string, cloudOrgName: string): Promise
       metode,
       metrics: metricsRes.body as CloudMetric[],
       info: `org «${fuzzy[0].name}» (id ${fuzzy[0].id}) - ${metricsRes.body.length} målere hentet`,
+      orgNavn: fuzzy[0].name,
     };
   }
   return { metode, metrics: null, info: `fant org «${fuzzy[0].name}», minted token, men /v0/metrics avvist (HTTP ${metricsRes.status})` };
+}
+
+// ---------- Automatisk søk etter riktig organisasjon ----------
+//
+// Rader havner ofte uten (eller med feil) strøm-org - typisk fordi kunden
+// ligger under et eget «SK <navn>»-org i Cloud, eller org-navnet i registeret
+// ikke er stavet likt. Siden vi uansett har admin-tokenet, kan vi lete etter
+// MålepunktID-en (eno) i ALLE organisasjoner i stedet for å kreve at noen
+// vet riktig org på forhånd. Eksakt eno-treff er pålitelig identitet.
+//
+// Cache pr. serverinstans (10 min): én bulk-sjekk eller cron-kjøring slår opp
+// mange målere, og skal ikke minte token og hente målerlisten på nytt for
+// hver eneste rad.
+const ORG_CACHE_MS = 10 * 60 * 1000;
+const MAKS_ORG_I_AUTOSOK = Number(process.env.ADAPTIC_CLOUD_AUTOSOK_MAKS_ORG || 80);
+let orgListeCache: { t: number; orgs: CloudOrg[] } | null = null;
+const orgMetricsCache = new Map<string, { t: number; token: string; metrics: CloudMetric[] }>();
+
+async function hentOrgListe(adminToken: string): Promise<CloudOrg[] | null> {
+  if (orgListeCache && Date.now() - orgListeCache.t < ORG_CACHE_MS) return orgListeCache.orgs;
+  const r = await fetchJson(`${CLOUD_API_BASE}/v0/internal/organizations`, { Authorization: `Bearer ${adminToken}` });
+  if (!r.ok || !Array.isArray(r.body)) return null;
+  orgListeCache = { t: Date.now(), orgs: r.body as CloudOrg[] };
+  return orgListeCache.orgs;
+}
+
+// Tak på nye org-oppslag pr. 10-minutters vindu - en cron-kjøring med mange
+// målere som ikke finnes i Cloud skal ikke skanne alle organisasjoner om og
+// om igjen mot Adaptic Cloud sitt API.
+const MAKS_NYE_ORG_OPPSLAG_PER_VINDU = Number(process.env.ADAPTIC_CLOUD_AUTOSOK_BUDSJETT || 250);
+let budsjettVindu = { start: Date.now(), brukt: 0 };
+
+async function hentMetricsForOrg(adminToken: string, org: CloudOrg): Promise<{ token: string; metrics: CloudMetric[] } | null> {
+  const cached = orgMetricsCache.get(org.id);
+  if (cached && Date.now() - cached.t < ORG_CACHE_MS) return cached;
+  if (Date.now() - budsjettVindu.start > ORG_CACHE_MS) budsjettVindu = { start: Date.now(), brukt: 0 };
+  if (budsjettVindu.brukt >= MAKS_NYE_ORG_OPPSLAG_PER_VINDU) return null;
+  budsjettVindu.brukt += 1;
+  const mintRes = await fetch(`${CLOUD_API_BASE}/v0/internal/organizations/${org.id}/internal_token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ writeAccess: false }),
+    cache: "no-store",
+  });
+  if (!mintRes.ok) return null;
+  const mint = (await mintRes.json().catch(() => null)) as { token: string } | null;
+  if (!mint?.token) return null;
+  const m = await fetchJson(`${CLOUD_API_BASE}/v0/metrics`, { Authorization: `Bearer ${mint.token}` });
+  if (!m.ok || !Array.isArray(m.body)) return null;
+  const entry = { t: Date.now(), token: mint.token, metrics: m.body as CloudMetric[] };
+  orgMetricsCache.set(org.id, entry);
+  return entry;
+}
+
+async function finnOrgMedMalepunkt(
+  adminToken: string,
+  malepunktId: string,
+  kundeNavn: string,
+  diagnostikk: string[],
+): Promise<{ treff: { org: CloudOrg; metric: CloudMetric } | null; skannet: number }> {
+  const orgs = await hentOrgListe(adminToken);
+  if (!orgs) { diagnostikk.push("automatisk org-søk: fikk ikke hentet organisasjonslisten"); return { treff: null, skannet: 0 }; }
+
+  const erMatch = (m: CloudMetric) => (m.eno || "").replace(/\D/g, "") === malepunktId;
+  // 1) Alt som allerede ligger i cache (billig).
+  for (const org of orgs) {
+    const c = orgMetricsCache.get(org.id);
+    const metric = c && Date.now() - c.t < ORG_CACHE_MS ? c.metrics.find(erMatch) : undefined;
+    if (metric) return { treff: { org, metric }, skannet: 1 };
+  }
+  const skannetFraCache = orgs.filter((o) => {
+    const c = orgMetricsCache.get(o.id);
+    return c && Date.now() - c.t < ORG_CACHE_MS;
+  }).length;
+
+  // 2) Prioriter organisasjoner som ligner kundenavnet, deretter «SK»-org.
+  const needle = normalizeOrgName(kundeNavn).replace(/^sk\s+/, "");
+  const score = (o: CloudOrg) => {
+    const n = normalizeOrgName(o.name);
+    const base = n.replace(/^sk\s+/, "");
+    if (needle && (base === needle)) return 0;
+    if (needle && (base.includes(needle) || needle.includes(base))) return 1;
+    return /^sk\s/.test(n) ? 2 : 3;
+  };
+  const kandidater = orgs
+    .filter((o) => !orgMetricsCache.has(o.id))
+    .sort((a, b) => score(a) - score(b))
+    .slice(0, MAKS_ORG_I_AUTOSOK);
+
+  let sjekket = skannetFraCache;
+  const BATCH = 4;
+  for (let i = 0; i < kandidater.length; i += BATCH) {
+    const batch = kandidater.slice(i, i + BATCH);
+    const svar = await Promise.all(batch.map((o) => hentMetricsForOrg(adminToken, o)));
+    for (let j = 0; j < batch.length; j++) {
+      if (!svar[j]) continue;
+      sjekket += 1;
+      const metric = svar[j]!.metrics.find(erMatch);
+      if (metric) return { treff: { org: batch[j], metric }, skannet: sjekket };
+    }
+  }
+  diagnostikk.push(`automatisk org-søk: lette i ${sjekket} av ${orgs.length} organisasjoner uten treff på MålepunktID`);
+  return { treff: null, skannet: sjekket };
 }
 
 // Fjerner adressen i parentes ("TV12 (Tveitaråsvegen 12)" -> "tv12") og
@@ -164,6 +274,7 @@ export async function slaOppMalepunktICloud(
   malepunktIdRaw: string,
   cloudOrgName: string,
   byggNavn?: string,
+  kundeNavn?: string,
 ): Promise<CloudLookupResult> {
   const malepunktId = malepunktIdRaw.replace(/\D/g, "");
   if (malepunktId.length !== 18) {
@@ -177,6 +288,7 @@ export async function slaOppMalepunktICloud(
     const diagnostikk: string[] = [];
     let treff: CloudMetric | undefined;
     let brukteMetode = "";
+    let funnetOrgNavn: string | null = null;
     let harHattEtVellykketKall = false;
     // Samler ALLE hentede målere på tvers av metodene - MålepunktID
     // (eno-feltet i Cloud) stemmer ikke alltid nøyaktig med kildefilens
@@ -195,6 +307,7 @@ export async function slaOppMalepunktICloud(
       if (funnet) {
         treff = funnet;
         brukteMetode = result.metode;
+        funnetOrgNavn = result.orgNavn ?? null;
       }
     };
 
@@ -218,6 +331,19 @@ export async function slaOppMalepunktICloud(
         if (funnet) { treff = funnet; brukteMetode = "X-Api-Key"; }
       } else {
         diagnostikk.push(`X-Api-Key: avvist (HTTP ${res.status})`);
+      }
+    }
+
+    // Ikke funnet via org-navnet på raden (eller raden mangler org): let i
+    // ALLE organisasjoner etter akkurat denne MålepunktID-en.
+    if (!treff && adminToken) {
+      const auto = await finnOrgMedMalepunkt(adminToken, malepunktId, (kundeNavn || cloudOrgName || "").trim(), diagnostikk);
+      if (auto.skannet > 0) harHattEtVellykketKall = true;
+      if (auto.treff) {
+        treff = auto.treff.metric;
+        brukteMetode = `automatisk org-søk («${auto.treff.org.name}»)`;
+        funnetOrgNavn = auto.treff.org.name;
+        diagnostikk.push(`automatisk org-søk: fant MålepunktID i organisasjonen «${auto.treff.org.name}»`);
       }
     }
 
@@ -277,6 +403,7 @@ export async function slaOppMalepunktICloud(
       foreslatt_status: iDrift ? "Aktiv" : "Satt opp i Cloud",
       metode: brukteMetode,
       sikkerIdentitet: !viaByggnavn,
+      cloud_org_funnet: viaByggnavn ? null : funnetOrgNavn,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "ukjent feil";

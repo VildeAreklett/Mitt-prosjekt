@@ -44,30 +44,21 @@ export async function GET(req: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // Kun rader som faktisk kan sjekkes (MålepunktID og cloud_org satt). Rader
+  // Alle rader med MålepunktID (mangler strøm-org, søkes riktig org opp
+  // automatisk - se finnOrgMedMalepunkt i lib/cloud-lookup.ts). Rader
   // som allerede er "Aktiv" tas bare med når årsforbruk mangler - da skal det
   // hentes fra Cloud (ingenting annet å oppdage for dem).
   const { data: rows, error: fetchError } = await supabase
     .from(TABLE)
-    .select("id, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh")
+    .select("id, kunde, bygg, maalepunkt_id, cloud_org, status, tsdb_id, aarsforbruk_kwh")
     .or("status.neq.Aktiv,aarsforbruk_kwh.is.null")
     .neq("status", "På vent")
     .not("maalepunkt_id", "is", null)
-    .not("cloud_org", "is", null)
-    .neq("cloud_org", "")
     .order("updated_at", { ascending: true }); // eldst sjekket først
 
   if (fetchError) {
     return NextResponse.json({ ok: false, error: fetchError.message }, { status: 500 });
   }
-
-  // Rader uten strøm-org kan aldri slås opp (jf. .neq("cloud_org", "") over) -
-  // tell dem og si fra i loggen i stedet for at de bare ikke er med.
-  const { count: utenStromOrg } = await supabase
-    .from(TABLE)
-    .select("id", { count: "exact", head: true })
-    .or("cloud_org.is.null,cloud_org.eq.")
-    .neq("status", "På vent");
 
   const alle = rows ?? [];
   const utvalg = alle.slice(0, MAKS_RADER_PER_KJORING);
@@ -78,7 +69,7 @@ export async function GET(req: Request) {
   const feilmeldinger: string[] = [];
 
   for (const rad of utvalg) {
-    const result = await slaOppMalepunktICloud(rad.maalepunkt_id as string, (rad.cloud_org as string) || "", (rad.bygg as string) || "");
+    const result = await slaOppMalepunktICloud(rad.maalepunkt_id as string, (rad.cloud_org as string) || "", (rad.bygg as string) || "", (rad.kunde as string) || "");
     if (!result.ok) {
       feilet += 1;
       feilmeldinger.push(`${rad.bygg}: ${result.error}`);
@@ -116,8 +107,13 @@ export async function GET(req: Request) {
     // (gjelder også "Satt opp i Cloud"/"Aktiv", som ellers aldri fikk
     // forbruk fylt inn). Kun ved sikker identitet - et bygningsnavn-treff
     // kan gi forbruket til en annen måler i samme bygg.
+    // Fant måleren i en annen (eller ingen) organisasjon enn raden peker på:
+    // lagre riktig strøm-org (kun ved eksakt MålepunktID-treff).
+    if (result.sikkerIdentitet && result.cloud_org_funnet && result.cloud_org_funnet !== ((rad.cloud_org as string) || "").trim()) {
+      patch.cloud_org = result.cloud_org_funnet;
+    }
     if (rad.aarsforbruk_kwh == null && result.sikkerIdentitet) {
-      const org = (rad.cloud_org as string) || "";
+      const org = (result.cloud_org_funnet || (rad.cloud_org as string) || "").trim();
       if (!tokenPerOrg.has(org)) {
         const t = await hentTokenForOrg(org);
         tokenPerOrg.set(org, t.ok ? t.token : null);
@@ -148,7 +144,6 @@ export async function GET(req: Request) {
     ok: true,
     sjekket: utvalg.length,
     droppet_denne_runden: droppet,
-    hoppet_over_uten_strom_org: utenStromOrg ?? 0,
     funnet,
     ikke_funnet: ikkeFunnet,
     feilet,

@@ -1432,15 +1432,9 @@ export default function StromflytPage() {
   async function sjekkEnMaalerICloud(r: Malepunkt): Promise<
     { ok: true; funnet: false; merknad?: string } | { ok: true; funnet: true; melding: string } | { ok: false; error: string }
   > {
-    // Uten strøm-org prøves bare det delte tokenet direkte (som Cloud avviser
-    // med 401) - raden kan aldri finnes. Si det rett ut i stedet for en
-    // kryptisk HTTP-feil.
-    if (!(r.cloud_org || "").trim()) {
-      return { ok: false, error: `${r.bygg}: mangler strøm-org - sett den først (bulk: «Sett X sin strøm-org»)` };
-    }
     try {
       const headers = await stromflytAuthHeaders();
-      const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "", bygg: r.bygg || "" });
+      const qs = new URLSearchParams({ malepunkt_id: r.maalepunkt_id, cloud_org: r.cloud_org || "", bygg: r.bygg || "", kunde: r.kunde || "" });
       const res = await fetch(`/api/cloud/sjekk-malepunkt?${qs.toString()}`, { headers });
       const data = await res.json();
       if (!res.ok || !data.ok) return { ok: false, error: data.error || "Ukjent feil" };
@@ -1481,6 +1475,14 @@ export default function StromflytPage() {
       // excel-parser.ts) - fylles inn her i etterkant når Cloud faktisk vet
       // det, samme prinsipp som tsdb_id/cloud_metric_id over.
       if (data.malenummer && !r.maalenummer.trim()) detaljer.maalenummer = data.malenummer;
+      // Måleren ble funnet i en annen organisasjon enn den raden peker på
+      // (eller raden mangler strøm-org): lagre den riktige, så forbruk og
+      // fremtidige oppslag går rett mot riktig org.
+      let orgMelding = "";
+      if (data.cloud_org_funnet && data.cloud_org_funnet !== (r.cloud_org || "").trim()) {
+        detaljer.cloud_org = data.cloud_org_funnet;
+        orgMelding = `, strøm-org satt til «${data.cloud_org_funnet}»`;
+      }
       // Årsforbruk mangler heller ikke sjelden fra kilden (Entelios sin egen
       // innmeldingsmal har ingen slik kolonne) - er måleren allerede i drift
       // i Cloud, bruk faktiske måledata som et estimat i stedet for å la
@@ -1494,7 +1496,7 @@ export default function StromflytPage() {
       return {
         ok: true,
         funnet: true,
-        melding: `funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}${forbrukMelding}`,
+        melding: `funnet i Cloud (${data.metode || "?"}) - bygg «${data.bygg ?? "?"}»${data.tsdb_id ? `, tsdb_id ${data.tsdb_id}` : ""}${statusMelding}${forbrukMelding}${orgMelding}`,
       };
     } catch (e: any) {
       return { ok: false, error: e.message ?? String(e) };

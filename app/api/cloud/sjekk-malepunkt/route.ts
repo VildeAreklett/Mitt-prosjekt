@@ -21,11 +21,12 @@ export async function GET(req: Request) {
   const malepunktId = url.searchParams.get("malepunkt_id") || "";
   const cloudOrgName = url.searchParams.get("cloud_org") || "";
   const bygg = url.searchParams.get("bygg") || "";
+  const kunde = url.searchParams.get("kunde") || "";
   if (malepunktId.replace(/\D/g, "").length !== 18) {
     return NextResponse.json({ ok: false, error: "malepunkt_id må være 18 siffer" }, { status: 400 });
   }
 
-  const result = await slaOppMalepunktICloud(malepunktId, cloudOrgName, bygg);
+  const result = await slaOppMalepunktICloud(malepunktId, cloudOrgName, bygg, kunde);
   if (!result.ok) {
     return NextResponse.json(result, { status: 502 });
   }
@@ -36,7 +37,9 @@ export async function GET(req: Request) {
   let estimert_aarsforbruk_kwh: number | null = null;
   if (result.funnet) {
     try {
-      const tokenRes = await hentTokenForOrg(cloudOrgName);
+      // Bruk orgen måleren faktisk ble funnet i (kan avvike fra, eller mangle på, raden).
+      const orgForToken = result.cloud_org_funnet || cloudOrgName;
+      const tokenRes = await hentTokenForOrg(orgForToken);
       if (tokenRes.ok) {
         const forbrukRes = await hentEstimertAarsforbruk(tokenRes.token, result.cloud_metric_id);
         if (forbrukRes.ok && forbrukRes.kwh > 0) estimert_aarsforbruk_kwh = forbrukRes.kwh;
@@ -64,6 +67,7 @@ export async function GET(req: Request) {
       foreslatt_status: null,
       metode: result.metode,
       estimert_aarsforbruk_kwh,
+      cloud_org_funnet: null,
     });
   }
 
