@@ -1742,19 +1742,25 @@ export default function StromflytPage() {
       const ids = new Set<string>();
       // Forventet årsforbruk («Venta forbruk», fra Elhub-historikk) per MålepunktID.
       const ventaForbruk = new Map<string, number>();
+      // Entelios sin statuskolonne: A = aktiv, M = mulig kunde (registrert, venter
+      // på oppstart), S = avsluttet/terminert. S skal ALDRI regnes som bekreftet.
+      const avsluttet = new Set<string>();
       for (const ws of wb.worksheets) {
-        let col = 0, headerRow = 0, ventaCol = 0;
+        let col = 0, headerRow = 0, ventaCol = 0, statusCol = 0;
         for (let r = 1; r <= Math.min(ws.rowCount, 10) && !col; r++) {
           ws.getRow(r).eachCell((cell, c) => {
             const t = String(cell.value ?? "").trim();
             if (!col && /^(ean|målepunkt\s?-?\s?id|malepunkt\s?-?\s?id|målepunktsid)/i.test(t)) { col = c; headerRow = r; }
             if (!ventaCol && /^(venta|ventet|forventet)\s*forbruk/i.test(t)) ventaCol = c;
+            if (!statusCol && /^status$/i.test(t)) statusCol = c;
           });
         }
         if (!col) continue;
         for (let r = headerRow + 1; r <= ws.rowCount; r++) {
           const v = String(ws.getRow(r).getCell(col).value ?? "").replace(/\D/g, "");
           if (v.length !== 18) continue;
+          const st = statusCol ? String(ws.getRow(r).getCell(statusCol).value ?? "").trim().toUpperCase() : "";
+          if (st === "S") { avsluttet.add(v); continue; }
           ids.add(v);
           if (ventaCol) {
             const raw = ws.getRow(r).getCell(ventaCol).value;
@@ -1769,8 +1775,10 @@ export default function StromflytPage() {
       const iRegister = new Set(rows.map((r) => r.maalepunkt_id.trim()));
       const ikkeIRegister = [...ids].filter((id) => !iRegister.has(id));
       const bekreftetUtenListe = rows.filter((r) => ["Bekreftet", "Satt opp i Cloud", "Aktiv"].includes(r.status) && !ids.has(r.maalepunkt_id.trim()));
+      // Rader som Entelios har som avsluttet/terminert: ikke bekreft dem, og si fra.
+      const avsluttetIRegister = rows.filter((r) => avsluttet.has(r.maalepunkt_id.trim()));
       const sammendrag =
-        `${file.name}: ${ids.size} målepunkt på Entelios-listen.\n\n` +
+        `${file.name}: ${ids.size} målepunkt på Entelios-listen${avsluttet.size ? ` (+ ${avsluttet.size} avsluttet/terminert, ${avsluttetIRegister.length} av dem i Strømflyt - IKKE bekreftet, sjekk dem)` : ""}.\n\n` +
         `• ${tilBekreftet.length} settes til «Registrert hos Entelios»\n` +
         `• ${ikkeIRegister.length} står på listen men finnes ikke i Strømflyt\n` +
         `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n\nFortsette?`;
