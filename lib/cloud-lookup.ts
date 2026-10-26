@@ -30,6 +30,14 @@ interface CloudMeter {
   tsdbId?: string;
 }
 
+// Noen organisasjoner (f.eks. Propcap) har ikke eno-feltet satt, men merker
+// hovedmåleren «HM <18-sifret MålepunktID>». Samme ID i merkelappen er like
+// entydig som eno, så begge regnes som sikker identitet.
+function harMaalepunkt(m: { eno?: string; label?: string }, malepunktId: string): boolean {
+  if ((m.eno || "").replace(/\D/g, "") === malepunktId) return true;
+  return (m.label || "").replace(/\s/g, "").includes(malepunktId);
+}
+
 interface CloudMetric {
   id: string;
   eno?: string;
@@ -251,7 +259,7 @@ async function finnOrgMedMalepunkt(
   const orgs = await hentOrgListe(adminToken);
   if (!orgs) { diagnostikk.push("automatisk org-søk: fikk ikke hentet organisasjonslisten"); return { treff: null, skannet: 0 }; }
 
-  const erMatch = (m: CloudMetric) => (m.eno || "").replace(/\D/g, "") === malepunktId;
+  const erMatch = (m: CloudMetric) => harMaalepunkt(m, malepunktId);
   // 1) Alt som allerede ligger i cache (billig).
   for (const org of orgs) {
     const c = orgMetricsCache.get(org.id);
@@ -344,7 +352,7 @@ export async function slaOppMalepunktICloud(
       alleMetrics.push(...result.metrics);
       if (result.token) for (const m of result.metrics) tokenForMetric.set(m.id, result.token);
       if (treff) return; // allerede funnet via en tidligere metode
-      const funnet = result.metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
+      const funnet = result.metrics.find((m) => harMaalepunkt(m, malepunktId));
       if (funnet) {
         treff = funnet;
         brukteMetode = result.metode;
@@ -369,7 +377,7 @@ export async function slaOppMalepunktICloud(
         diagnostikk.push(`X-Api-Key: ${metrics.length} målere hentet`);
         harHattEtVellykketKall = true;
         alleMetrics.push(...metrics);
-        const funnet = metrics.find((m) => (m.eno || "").replace(/\D/g, "") === malepunktId);
+        const funnet = metrics.find((m) => harMaalepunkt(m, malepunktId));
         if (funnet) { treff = funnet; brukteMetode = "X-Api-Key"; }
       } else {
         diagnostikk.push(`X-Api-Key: avvist (HTTP ${res.status})`);
