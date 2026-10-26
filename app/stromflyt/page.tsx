@@ -2666,29 +2666,6 @@ export default function StromflytPage() {
               />
             </div>
 
-            <div className="panel forbruksgrunnlag">
-              <div className="hd">
-                <div>
-                  <h2>Forbruksgrunnlag</h2>
-                  <span className="sub">Hvor solid er volumtallet? Hver måler telles én gang, etter hvor årsforbruket kommer fra{tiles.avvikAntall > 0 ? ` · ${tiles.avvikAntall} måler${tiles.avvikAntall === 1 ? "" : "e"} der Cloud og Entelios avviker mer enn ${Math.round(AVVIK_GRENSE * 100)} %` : ""}</span>
-                </div>
-              </div>
-              <table className="grunnlag-tabell">
-                <thead><tr><th>Kilde</th><th className="num">Målere</th><th className="num">GWh</th><th className="num">Andel</th><th>Tillit</th></tr></thead>
-                <tbody>
-                  {tiles.forbruksgrunnlag.map((g) => (
-                    <tr key={g.key}>
-                      <td>{g.navn}</td>
-                      <td className="num">{g.antall}</td>
-                      <td className="num">{g.gwh.toFixed(2)}</td>
-                      <td className="num">{tiles.gwhSolgtTotalt > 0 ? `${Math.round((g.gwh / tiles.gwhSolgtTotalt) * 100)} %` : "-"}</td>
-                      <td>{g.tillit}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
             <div className="overview-2col">
               <div className="panel livslop">
                 <div className="hd">
@@ -2818,6 +2795,29 @@ export default function StromflytPage() {
                 )}
               </div>
             </div>
+
+            <details className="panel forbruksgrunnlag">
+              <summary className="hd grunnlag-summary">
+                <div>
+                  <h2>Forbruksgrunnlag</h2>
+                  <span className="sub">Hvor solid er volumtallet? Hver måler telles én gang, etter hvor årsforbruket kommer fra{tiles.avvikAntall > 0 ? ` · ${tiles.avvikAntall} måler${tiles.avvikAntall === 1 ? "" : "e"} der Cloud og Entelios avviker mer enn ${Math.round(AVVIK_GRENSE * 100)} %` : ""}</span>
+                </div>
+              </summary>
+              <table className="grunnlag-tabell">
+                <thead><tr><th>Kilde</th><th className="num">Målere</th><th className="num">GWh</th><th className="num">Andel</th><th>Tillit</th></tr></thead>
+                <tbody>
+                  {tiles.forbruksgrunnlag.map((g) => (
+                    <tr key={g.key}>
+                      <td>{g.navn}</td>
+                      <td className="num">{g.antall}</td>
+                      <td className="num">{g.gwh.toFixed(2)}</td>
+                      <td className="num">{tiles.gwhSolgtTotalt > 0 ? `${Math.round((g.gwh / tiles.gwhSolgtTotalt) * 100)} %` : "-"}</td>
+                      <td>{g.tillit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
           </section>
         )}
 
@@ -3660,7 +3660,9 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-kladd{color:var(--sf-ink-2);background:var(--sf-surface-2)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
 .forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
-.forbruksgrunnlag{margin-bottom:18px}
+.forbruksgrunnlag{margin-top:18px}
+.grunnlag-summary{cursor:pointer;list-style:none}
+.grunnlag-summary::-webkit-details-marker{display:none}
 .grunnlag-tabell{width:100%;border-collapse:collapse;font-size:13px}
 .grunnlag-tabell th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-ink-3);font-weight:600;text-align:left;padding:8px 18px}
 .grunnlag-tabell td{padding:8px 18px;border-top:1px solid var(--sf-border)}
