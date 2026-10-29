@@ -1760,7 +1760,7 @@ export default function StromflytPage() {
           const v = String(ws.getRow(r).getCell(col).value ?? "").replace(/\D/g, "");
           if (v.length !== 18) continue;
           const st = statusCol ? String(ws.getRow(r).getCell(statusCol).value ?? "").trim().toUpperCase() : "";
-          if (st === "S") { avsluttet.add(v); continue; }
+          if (st === "S" || st === "O") { avsluttet.add(v); continue; }
           ids.add(v);
           if (ventaCol) {
             const raw = ws.getRow(r).getCell(ventaCol).value;
