@@ -134,6 +134,12 @@ export function erUtenforPortefolje(s: Status): boolean {
 
 export type AtSerie = "AT300x" | "AT400x" | "Uten AT-kode";
 export const AT_SERIER: AtSerie[] = ["AT300x", "AT400x", "Uten AT-kode"];
+// Visningsnavn: seriene er interne koder, kollegaer leser heller hva de betyr.
+export const AT_SERIE_NAVN: Record<AtSerie, string> = {
+  AT300x: "Med leietakerfakturering",
+  AT400x: "Rent strømsalg",
+  "Uten AT-kode": "Mangler AT-kode",
+};
 
 // AT300XX = med fakturatjeneste, AT400XX = kun strømsalg. Alt annet (tomt,
 // eller et format vi ikke kjenner) havner i «Uten AT-kode» og flagges - vi

@@ -97,6 +97,16 @@ export async function updateCloudOrg(ids: string[], cloudOrg: string): Promise<v
   if (error) throw error;
 }
 
+// Setter innkjøpsleverandør på flere målepunkt samtidig (migration-015).
+export async function updateLeverandor(ids: string[], leverandor: string): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from(TABLE)
+    .update({ innkjopsleverandor: leverandor })
+    .in("id", ids);
+  if (error) throw error;
+}
+
 export async function updateMalepunktDetails(
   id: string,
   patch: Partial<Omit<Malepunkt, "id" | "created_at" | "updated_at">>,

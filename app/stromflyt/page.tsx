@@ -19,6 +19,7 @@ import {
   ENTELIOS_MAIL,
   STANDARD_LEVERANDOR,
   AT_SERIER,
+  AT_SERIE_NAVN,
   leverandorAv,
   erUtenforPortefolje,
   atSerie,
@@ -35,6 +36,7 @@ import {
   updateStatuses,
   updateAvtaletype,
   updateCloudOrg,
+  updateLeverandor,
   updateMalepunktDetails,
   updateCustomerSeller,
   updateCustomerKontaktperson,
@@ -248,6 +250,7 @@ export default function StromflytPage() {
   const [err, setErr] = useState<string | null>(null);
   const [fltStatus, setFltStatus] = useState("");
   const [bulkCloudOrg, setBulkCloudOrg] = useState("");
+  const [bulkLeverandor, setBulkLeverandor] = useState("");
   const [workFilter, setWorkFilter] = useState<WorkFilter>("");
   const [search, setSearch] = useState("");
   const [fltLeverandor, setFltLeverandor] = useState("");
@@ -1801,6 +1804,19 @@ export default function StromflytPage() {
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
   }
 
+  async function setSelectedLeverandor(navn: string) {
+    const ids = selectedRowsForBulk.map((r) => r.id);
+    if (!ids.length || !navn.trim()) return;
+    try {
+      await updateLeverandor(ids, navn.trim());
+      await refresh();
+      flash(`${ids.length} målepunkt satt til leverandør «${navn.trim()}»`);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      flash(/innkjopsleverandor/i.test(msg) ? "Kjør migration-015 i Supabase først" : "Feil: " + msg);
+    }
+  }
+
   // Entelios har ingen integrasjon - bekreftelsen kommer som en Excel-liste
   // (anleggsliste/målepunktsliste) på mail. Les MålepunktID-ene fra den og flytt
   // alle treff som ikke er bekreftet ennå til "Bekreftet" i ett steg, i stedet
@@ -2783,17 +2799,17 @@ export default function StromflytPage() {
             <div className="panel levmatrise">
               <div className="hd">
                 <div>
-                  <h2>Solgt volum per AT-serie og leverandør</h2>
+                  <h2>Solgt volum per salgstype og leverandør</h2>
                   <span className="sub">Bare målere med volumkilde (avtale eller Cloud) teller i GWh. Kladd, På vent og Avsluttet er ikke med. Klikk en celle for å se målerne.</span>
                 </div>
               </div>
               <table className="matrise-tabell">
                 <thead>
                   <tr>
-                    <th>AT-serie</th>
+                    <th>Salgstype</th>
                     {leverandorMatrise.leverandorer.map((l) => <th key={l} className="mat-r">{l}</th>)}
                     {visSum && <th className="mat-r">Sum</th>}
-                    <th className="mat-r" title="Andel av alt volum med volumkilde, inkludert Uten AT-kode">Andel av total</th>
+                    <th className="mat-r" title="Andel av alt volum med volumkilde, inkludert de som mangler AT-kode">Andel av total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2814,7 +2830,7 @@ export default function StromflytPage() {
                     };
                     return (
                       <tr key={serie}>
-                        <td>{serie}</td>
+                        <td>{AT_SERIE_NAVN[serie]}<small className="matrise-kode">{serie === "Uten AT-kode" ? "bør få AT-kode" : serie}</small></td>
                         {leverandorMatrise.leverandorer.map((l) => {
                           const c = leverandorMatrise.celler.get(`${serie}|${l}`);
                           return (
@@ -2845,7 +2861,7 @@ export default function StromflytPage() {
               </table>
               {leverandorMatrise.andel300 !== null && leverandorMatrise.andel400 !== null && (
                 <p className="matrise-andel">
-                  Hvis «Uten AT-kode» holdes utenfor ({fmtGwh(leverandorMatrise.radSum.get("Uten AT-kode")?.gwh ?? 0)} GWh) er fordelingen <b>AT300x {Math.round(leverandorMatrise.andel300)} %</b> og <b>AT400x {Math.round(leverandorMatrise.andel400)} %</b>.
+                  Hvis «Mangler AT-kode» holdes utenfor ({fmtGwh(leverandorMatrise.radSum.get("Uten AT-kode")?.gwh ?? 0)} GWh) er fordelingen <b>{Math.round(leverandorMatrise.andel300)} % med leietakerfakturering</b> og <b>{Math.round(leverandorMatrise.andel400)} % rent strømsalg</b>.
                 </p>
               )}
             </div>
@@ -3035,10 +3051,10 @@ export default function StromflytPage() {
                   {leverandorForslag.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
               </label>
-              <label className="flt">AT-serie
+              <label className="flt">Salgstype
                 <select value={fltAtSerie} onChange={(e) => setFltAtSerie(e.target.value as "" | AtSerie)}>
                   <option value="">alle</option>
-                  {AT_SERIER.map((a) => <option key={a} value={a}>{a}</option>)}
+                  {AT_SERIER.map((a) => <option key={a} value={a}>{AT_SERIE_NAVN[a]}</option>)}
                 </select>
               </label>
               <label className="flt">Sorter
@@ -3100,6 +3116,17 @@ export default function StromflytPage() {
               />
               <datalist id="cloud-org-list-bulk">{cloudOrgForslag.map((o) => <option key={o} value={o} />)}</datalist>
               <button className="btn sm" disabled={!bulkCloudOrg.trim()} onClick={() => setSelectedCloudOrg(bulkCloudOrg)}>Sett {selectedRowsForBulk.length} sin strøm-org</button>
+              <input
+                list="leverandor-liste-bulk"
+                className="compact-input"
+                style={{ width: 140 }}
+                placeholder="leverandør"
+                value={bulkLeverandor}
+                onChange={(e) => setBulkLeverandor(e.target.value)}
+                title="Hvem vi kjøper kraften fra for de valgte målerne"
+              />
+              <datalist id="leverandor-liste-bulk">{leverandorForslag.map((l) => <option key={l} value={l} />)}</datalist>
+              <button className="btn sm" disabled={!bulkLeverandor.trim()} onClick={() => setSelectedLeverandor(bulkLeverandor)}>Sett {selectedRowsForBulk.length} sin leverandør</button>
               <button className="btn sm" onClick={sjekkFlereICloud}>Sjekk {selectedRowsForBulk.length} i Cloud</button>
               <button className="btn sm" onClick={() => setSelectedIds([])}>Fjern valg</button>
               <button className="btn sm danger" disabled={!selectedDeletableIds.length} onClick={removeSelected}>
@@ -3872,18 +3899,19 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
 .pill.s-avsluttet{color:var(--sf-ink-3);background:var(--sf-surface-2);text-decoration:line-through}
 .levmatrise{margin-bottom:18px}
-.matrise-tabell{width:auto;min-width:640px;border-collapse:collapse;font-size:13px;margin:0 0 4px}
-.matrise-tabell th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-ink-3);font-weight:600;text-align:left;padding:8px 18px}
-.matrise-tabell td{padding:10px 18px;border-top:1px solid var(--sf-border);text-align:left}
-.matrise-tabell .mat-r{text-align:right;font-variant-numeric:tabular-nums;min-width:170px}
-.matrise-tabell th.mat-r{text-align:right}
-.matrise-tabell tfoot td{border-top:2px solid var(--sf-border-strong);font-weight:600}
-.matrise-celle b{display:block;font-size:15px}
-.matrise-celle small{display:block;font-size:12px;color:var(--sf-ink-3);font-weight:400}
-.matrise-celle button{font:inherit;text-align:right;background:none;border:0;padding:0;cursor:pointer;color:inherit}
-.matrise-celle button:hover b{color:var(--sf-accent);text-decoration:underline}
-.matrise-celle.sum{background:var(--sf-surface-2)}
-.matrise-flagg{color:#8a5a00;font-weight:600}
+.sf-root .matrise-tabell{width:auto;min-width:760px;border-collapse:collapse;font-size:13px;margin:0 0 4px}
+.sf-root .matrise-tabell th{white-space:normal;position:static;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-ink-3);font-weight:600;text-align:left;padding:8px 18px}
+.sf-root .matrise-tabell td{padding:10px 18px;border-top:1px solid var(--sf-border);text-align:left}
+.sf-root .matrise-tabell .mat-r{text-align:right;font-variant-numeric:tabular-nums;min-width:170px}
+.sf-root .matrise-tabell th.mat-r{text-align:right}
+.sf-root .matrise-tabell tfoot td{border-top:2px solid var(--sf-border-strong);font-weight:600}
+.sf-root .matrise-celle b{display:block;font-size:15px}
+.sf-root .matrise-celle small{display:block;font-size:12px;color:var(--sf-ink-3);font-weight:400}
+.sf-root .matrise-celle button{font:inherit;text-align:right;background:none;border:0;padding:0;cursor:pointer;color:inherit}
+.sf-root .matrise-celle button:hover b{color:var(--sf-accent);text-decoration:underline}
+.sf-root .matrise-celle.sum{background:var(--sf-surface-2)}
+.sf-root .matrise-flagg{color:#8a5a00;font-weight:600}
+.sf-root .matrise-tabell td .matrise-kode{display:block;font-size:11px;color:var(--sf-ink-3);font-weight:400;margin-top:1px}
 .matrise-andel{margin:12px 18px 16px;font-size:13px;color:var(--sf-ink-2)}
 .forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
 .forbruksgrunnlag{margin-top:18px}
