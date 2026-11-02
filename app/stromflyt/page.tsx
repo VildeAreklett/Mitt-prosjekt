@@ -2793,7 +2793,7 @@ export default function StromflytPage() {
                     <th>AT-serie</th>
                     {leverandorMatrise.leverandorer.map((l) => <th key={l} className="mat-r">{l}</th>)}
                     {visSum && <th className="mat-r">Sum</th>}
-                    <th className="mat-r">Andel</th>
+                    <th className="mat-r" title="Andel av alt volum med volumkilde, inkludert Uten AT-kode">Andel av total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2845,7 +2845,7 @@ export default function StromflytPage() {
               </table>
               {leverandorMatrise.andel300 !== null && leverandorMatrise.andel400 !== null && (
                 <p className="matrise-andel">
-                  Fordeling for målere med AT-kode: <b>AT300x {Math.round(leverandorMatrise.andel300)} %</b> · <b>AT400x {Math.round(leverandorMatrise.andel400)} %</b> (av GWh med volumkilde)
+                  Hvis «Uten AT-kode» holdes utenfor ({fmtGwh(leverandorMatrise.radSum.get("Uten AT-kode")?.gwh ?? 0)} GWh) er fordelingen <b>AT300x {Math.round(leverandorMatrise.andel300)} %</b> og <b>AT400x {Math.round(leverandorMatrise.andel400)} %</b>.
                 </p>
               )}
             </div>
