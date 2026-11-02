@@ -104,8 +104,9 @@ export async function updateMalepunktDetails(
   let { error } = await supabase.from(TABLE).update(tilDbRad(patch)).eq("id", id);
   // migration-013 (forbruk_*-kolonnene) er kanskje ikke kjørt ennå - lagre da
   // resten i stedet for at hele oppdateringen (tsdb_id osv.) feiler.
-  if (error && /forbruk_/.test(error.message || "")) {
-    const uten = Object.fromEntries(Object.entries(patch).filter(([k]) => !k.startsWith("forbruk_")));
+  // Samme for migration-015 (innkjopsleverandor/hovedkontrakt/avtalt_slutt).
+  if (error && /forbruk_|innkjopsleverandor|hovedkontrakt|avtalt_slutt/.test(error.message || "")) {
+    const uten = Object.fromEntries(Object.entries(patch).filter(([k]) => !k.startsWith("forbruk_") && !["innkjopsleverandor", "hovedkontrakt", "avtalt_slutt"].includes(k)));
     if (Object.keys(uten).length) ({ error } = await supabase.from(TABLE).update(tilDbRad(uten)).eq("id", id));
     else error = null;
   }

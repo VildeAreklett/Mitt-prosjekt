@@ -17,6 +17,13 @@ import {
   fmt,
   ENTELIOS_COLUMNS,
   ENTELIOS_MAIL,
+  STANDARD_LEVERANDOR,
+  AT_SERIER,
+  leverandorAv,
+  erUtenforPortefolje,
+  atSerie,
+  harVolumKilde,
+  type AtSerie,
   type Malepunkt,
   type Status,
 } from "../../lib/stromflyt-config";
@@ -98,6 +105,7 @@ const STATUS_CLASS: Record<Status, string> = {
   "Satt opp i Cloud": "s-cloud",
   Aktiv: "s-aktiv",
   "På vent": "s-vent",
+  Avsluttet: "s-avsluttet",
 };
 
 const shortStage = (s: string) =>
@@ -148,7 +156,7 @@ const displayNameFromEmail = (email: string | null) => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 };
 
-type WorkFilter = "" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "pa-vent";
+type WorkFilter = "" | "solgt" | "kladd" | "handling" | "venter" | "klar-cloud" | "cloud" | "drift" | "pa-vent" | "avsluttet";
 type SortKey = "arbeidsrekkefolge" | "oppstart" | "kunde" | "status" | "nyeste";
 
 const MANEDSNAVN = ["Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"];
@@ -162,6 +170,9 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // sidemenyavsnitt (se "FORARBEID" i navigasjonen) i stedet for blant de
   // andre arbeidskøene, siden den ikke hører til selve innmeldingsløpet.
   { key: "kladd", label: "Kladd", statuses: ["Kladd"], skjult: true },
+  // Solgt = alt i løpet etter Kladd. Brukes når man klikker en celle i
+  // leverandørmatrisen på Oversikt, så antallet i listen stemmer med cellen.
+  { key: "solgt", label: "Solgt", statuses: STAGES.filter((s) => s !== "Kladd"), skjult: true },
   // Alt som er klart til å sendes til Entelios (Innmeldt/Klar for bestilling) -
   // én enkel samlekø for "dette gjenstår å sende inn". Kladd er BEVISST ikke
   // med: det er forarbeid uten avtale, og skal aldri havne i en innmeldingsfil
@@ -182,6 +193,8 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // Parkert: skulle likevel ikke over til oss, eller må vente. Ikke en
   // arbeidskø - bare et sted å ha kontroll på det som er tatt ut av løpet.
   { key: "pa-vent", label: "På vent / ikke over", statuses: ["På vent"] },
+  // Terminert/opphørt hos leverandøren. Ute av porteføljen, men beholdes som historikk.
+  { key: "avsluttet", label: "Avsluttet", statuses: ["Avsluttet"] },
 ];
 
 // Kolonner i arbeidslisten som kan skrus av/på - Kunde og Handling vises alltid,
@@ -189,6 +202,7 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
 // databasen - det er en visningspreferanse, ikke data.
 const REG_COLUMNS: { key: string; label: string }[] = [
   { key: "selger", label: "Selger" },
+  { key: "innkjopsleverandor", label: "Leverandør" },
   { key: "bygg", label: "Bygg" },
   { key: "maalepunkt_id", label: "MålepunktID" },
   { key: "netteier", label: "Netteier" },
@@ -206,6 +220,7 @@ const emptyForm: Partial<Malepunkt> = {
   avtalt_oppstart: "", at_kode: "", signert: false, kommentar: "",
   avtaletype: "", leverandoravtale_fil_sti: null,
   kontaktperson_navn: "", kontaktperson_epost: "", tsdb_id: null,
+  innkjopsleverandor: STANDARD_LEVERANDOR, hovedkontrakt: "",
 };
 
 export default function StromflytPage() {
@@ -235,6 +250,8 @@ export default function StromflytPage() {
   const [bulkCloudOrg, setBulkCloudOrg] = useState("");
   const [workFilter, setWorkFilter] = useState<WorkFilter>("");
   const [search, setSearch] = useState("");
+  const [fltLeverandor, setFltLeverandor] = useState("");
+  const [fltAtSerie, setFltAtSerie] = useState<"" | AtSerie>("");
   const [sortKey, setSortKey] = useState<SortKey>("arbeidsrekkefolge");
   const [visibleCols, setVisibleCols] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(REG_COLUMNS.map((c) => [c.key, true]))
@@ -476,6 +493,8 @@ export default function StromflytPage() {
     const result = rows.filter((r) => {
       const text = [r.kunde, r.selger, r.bygg, r.adresse, r.maalepunkt_id, r.maalenummer, r.at_kode, r.netteier].join(" ").toLowerCase();
       return (!fltStatus || r.status === fltStatus)
+        && (!fltLeverandor || leverandorAv(r) === fltLeverandor)
+        && (!fltAtSerie || atSerie(r.at_kode) === fltAtSerie)
         && (!activeWork?.statuses.length || activeWork.statuses.includes(r.status))
         && (!q || text.includes(q));
     });
@@ -497,7 +516,7 @@ export default function StromflytPage() {
       const stage = stageIdx(a.status) - stageIdx(b.status);
       return stage || (a.avtalt_oppstart || "9999").localeCompare(b.avtalt_oppstart || "9999");
     });
-  }, [rows, fltStatus, workFilter, search, sortKey]);
+  }, [rows, fltStatus, fltLeverandor, fltAtSerie, workFilter, search, sortKey]);
 
   // Globalt søk i toppen: finner et målepunkt uansett hvilken visning man står
   // i, i motsetning til søkefeltet i arbeidslisten som bare filtrerer der.
@@ -550,7 +569,7 @@ export default function StromflytPage() {
   }).length || 0, [excelSheet, excelSelected, excelMappings, excelRowNetteier, excelRowPrisomrade, excelRowAarsforbruk, rows]);
 
   const tiles = useMemo(() => {
-    const alle = rows.filter((r) => r.status !== "På vent");
+    const alle = rows.filter((r) => !erUtenforPortefolje(r.status));
     const trenger = rows.filter((r) => r.status === "Innmeldt" || r.status === "Klar for bestilling").length;
     const eierskifte = alle.filter((r) => r.avtaletype === "Eierskifte").length;
     const spotavtale = alle.filter((r) => r.avtaletype === "Spotavtale").length;
@@ -612,6 +631,51 @@ export default function StromflytPage() {
     };
   }, [rows]);
 
+  // Solgt volum per AT-serie og innkjøpsleverandør. Kladd er forarbeid uten
+  // avtale og telles ikke; På vent og Avsluttet ligger utenfor porteføljen.
+  // GWh teller bare målere med volumkilde (avtale/Cloud, se harVolumKilde) -
+  // målere uten teller som «uten volum» og blir aldri fylt ut med et anslag.
+  const leverandorMatrise = useMemo(() => {
+    const solgt = rows.filter((r) => !erUtenforPortefolje(r.status) && r.status !== "Kladd");
+    const leverandorer = [...new Set(solgt.map(leverandorAv))].sort((a, b) =>
+      a === STANDARD_LEVERANDOR ? -1 : b === STANDARD_LEVERANDOR ? 1 : a.localeCompare(b, "nb"));
+    type Celle = { malere: number; medVolum: number; utenVolum: number; prognose: number; gwh: number };
+    const tom = (): Celle => ({ malere: 0, medVolum: 0, utenVolum: 0, prognose: 0, gwh: 0 });
+    const celler = new Map<string, Celle>();
+    const radSum = new Map<AtSerie, Celle>();
+    const kolSum = new Map<string, Celle>();
+    const total = tom();
+    const legg = (c: Celle, r: Malepunkt) => {
+      c.malere++;
+      if (harVolumKilde(r)) {
+        c.medVolum++;
+        c.gwh += (r.aarsforbruk_kwh || 0) / 1_000_000;
+        if (r.forbruk_kilde === "cloud" && (r.forbruk_maaneder ?? 12) < 12) c.prognose++;
+      } else c.utenVolum++;
+    };
+    for (const r of solgt) {
+      const serie = atSerie(r.at_kode);
+      const lev = leverandorAv(r);
+      const k = `${serie}|${lev}`;
+      if (!celler.has(k)) celler.set(k, tom());
+      if (!radSum.has(serie)) radSum.set(serie, tom());
+      if (!kolSum.has(lev)) kolSum.set(lev, tom());
+      legg(celler.get(k)!, r); legg(radSum.get(serie)!, r); legg(kolSum.get(lev)!, r); legg(total, r);
+    }
+    const medKode = (radSum.get("AT300x")?.gwh ?? 0) + (radSum.get("AT400x")?.gwh ?? 0);
+    return {
+      leverandorer, total, celler, radSum, kolSum,
+      andel300: medKode > 0 ? ((radSum.get("AT300x")?.gwh ?? 0) / medKode) * 100 : null,
+      andel400: medKode > 0 ? ((radSum.get("AT400x")?.gwh ?? 0) / medKode) * 100 : null,
+    };
+  }, [rows]);
+
+  const leverandorForslag = useMemo(
+    () => [...new Set([STANDARD_LEVERANDOR, ...rows.map(leverandorAv)])].sort((a, b) =>
+      a === STANDARD_LEVERANDOR ? -1 : b === STANDARD_LEVERANDOR ? 1 : a.localeCompare(b, "nb")),
+    [rows],
+  );
+
   // Livsløp: antall målepunkt per steg i statuslinjen, til den vannrette
   // stolpelisten i Oversikt - viser hvor "tykk" hver fase er akkurat nå.
   const livslop = useMemo(() => {
@@ -627,7 +691,7 @@ export default function StromflytPage() {
   // den i realiteten bare hadde rukket videre.
   const bekreftetTotalt = useMemo(() => {
     const antall = rows.filter((r) => STAGES.indexOf(r.status) >= STAGES.indexOf("Bekreftet")).length;
-    return { antall, avTotalt: rows.filter((r) => r.status !== "På vent").length };
+    return { antall, avTotalt: rows.filter((r) => !erUtenforPortefolje(r.status)).length };
   }, [rows]);
 
   // Prioriterte køer på Oversikt - de tre køene som faktisk trenger en
@@ -1653,6 +1717,10 @@ export default function StromflytPage() {
         kontaktperson_epost: form.kontaktperson_epost?.trim() || "",
         tsdb_id: form.tsdb_id ?? null,
         cloud_metric_id: form.cloud_metric_id ?? null,
+        // Bare med når det avviker fra standard, så lagring virker også før
+        // migration-015 er kjørt i Supabase.
+        ...(leverandorAv(form as Malepunkt) !== STANDARD_LEVERANDOR ? { innkjopsleverandor: leverandorAv(form as Malepunkt) } : {}),
+        ...((form.hovedkontrakt ?? "").trim() ? { hovedkontrakt: (form.hovedkontrakt ?? "").trim() } : {}),
       };
       if (editingId) {
         await updateMalepunktDetails(editingId, payload);
@@ -1771,17 +1839,24 @@ export default function StromflytPage() {
       }
       if (!ids.size) { flash("Fant ingen MålepunktID-er i filen", "Forventer en kolonne som heter EAN eller MålepunktID"); return; }
       const apen: Status[] = ["Innmeldt", "Klar for bestilling", "Sendt Entelios"];
-      const tilBekreftet = rows.filter((r) => apen.includes(r.status) && ids.has(r.maalepunkt_id.trim()));
+      // Listen er fra Entelios: rader hos andre leverandører avstemmes ikke mot den.
+      const entRows = rows.filter((r) => leverandorAv(r) === STANDARD_LEVERANDOR);
+      const tilBekreftet = entRows.filter((r) => apen.includes(r.status) && ids.has(r.maalepunkt_id.trim()));
       const iRegister = new Set(rows.map((r) => r.maalepunkt_id.trim()));
       const ikkeIRegister = [...ids].filter((id) => !iRegister.has(id));
-      const bekreftetUtenListe = rows.filter((r) => ["Bekreftet", "Satt opp i Cloud", "Aktiv"].includes(r.status) && !ids.has(r.maalepunkt_id.trim()));
+      const bekreftetUtenListe = entRows.filter((r) => ["Bekreftet", "Satt opp i Cloud", "Aktiv"].includes(r.status) && !ids.has(r.maalepunkt_id.trim()));
       // Rader som Entelios har som avsluttet/terminert: ikke bekreft dem, og si fra.
-      const avsluttetIRegister = rows.filter((r) => avsluttet.has(r.maalepunkt_id.trim()));
+      const avsluttetIRegister = entRows.filter((r) => avsluttet.has(r.maalepunkt_id.trim()));
+      // Entelios sier S/O: foreslås satt til Avsluttet (bekreftes i samme dialog).
+      // Sluttdato settes ikke - den står ikke i listen vi leser.
+      const tilAvsluttet = avsluttetIRegister.filter((r) => r.status !== "Avsluttet");
       const sammendrag =
         `${file.name}: ${ids.size} målepunkt på Entelios-listen${avsluttet.size ? ` (+ ${avsluttet.size} avsluttet/terminert, ${avsluttetIRegister.length} av dem i Strømflyt - IKKE bekreftet, sjekk dem)` : ""}.\n\n` +
         `• ${tilBekreftet.length} settes til «Registrert hos Entelios»\n` +
         `• ${ikkeIRegister.length} står på listen men finnes ikke i Strømflyt\n` +
-        `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n\nFortsette?`;
+        `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n` +
+        (tilAvsluttet.length ? `• ${tilAvsluttet.length} settes til «Avsluttet» (S/O hos Entelios): ${tilAvsluttet.slice(0, 8).map((r) => r.bygg).join(", ")}${tilAvsluttet.length > 8 ? " …" : ""}\n` : "") +
+        `\nFortsette?`;
       // Forventet forbruk fra Entelios: lagres som alternativ på raden, og blir
       // årsforbruket når det er beste kilde (se velgForbruk). Tall lagt inn for
       // hånd (ingen forbruk_kilde) overskrives aldri.
@@ -1804,9 +1879,13 @@ export default function StromflytPage() {
         forbrukOppdateringer.push({ r, patch });
       }
       const sammendrag2 = sammendrag.replace("\n\nFortsette?", `\n• ${forbrukOppdateringer.length} får forventet årsforbruk fra Entelios lagret\n\nFortsette?`);
-      if (!tilBekreftet.length && !forbrukOppdateringer.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
+      if (!tilBekreftet.length && !forbrukOppdateringer.length && !tilAvsluttet.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
       if (!window.confirm(sammendrag2)) return;
       if (tilBekreftet.length) await updateStatuses(tilBekreftet.map((r) => r.id), "Bekreftet");
+      if (tilAvsluttet.length) {
+        const notat = `Avsluttet ${new Date().toLocaleDateString("nb-NO")}: status S/O i Entelios-listen (${file.name})`;
+        for (const r of tilAvsluttet) await updateStatus(r.id, "Avsluttet", { kommentar: [notat, r.kommentar].filter(Boolean).join(" | ") });
+      }
       for (let i = 0; i < forbrukOppdateringer.length; i += 6) {
         await Promise.all(forbrukOppdateringer.slice(i, i + 6).map(({ r, patch }) => updateMalepunktDetails(r.id, patch).catch(() => undefined)));
       }
@@ -1833,6 +1912,35 @@ export default function StromflytPage() {
       await refresh();
       flash(`${targets.length} målepunkt satt på vent`);
     } catch (e: any) { flash("Feil: " + (e.message ?? e)); }
+  }
+
+  // Avslutter valgte målepunkt (terminert/opphørt hos leverandøren). Raden
+  // beholdes som historikk, men teller ikke lenger som solgt volum.
+  // Sluttdato er valgfri - vi setter aldri en dato vi ikke har fått oppgitt.
+  async function avsluttValgte() {
+    const targets = selectedRowsForBulk.filter((r) => r.status !== "Avsluttet");
+    if (!targets.length) return;
+    const arsak = window.prompt(`Hvorfor avsluttes ${targets.length} målepunkt? (f.eks. «Opphørt hos Entelios 22.10»)`);
+    if (arsak === null) return;
+    const slutt = window.prompt("Sluttdato (ÅÅÅÅ-MM-DD). La stå tom hvis datoen ikke er kjent.", "");
+    if (slutt === null) return;
+    const sluttDato = slutt.trim();
+    if (sluttDato && !/^\d{4}-\d{2}-\d{2}$/.test(sluttDato)) { flash("Ugyldig dato", "Bruk formatet ÅÅÅÅ-MM-DD, eller la feltet stå tomt"); return; }
+    const notat = `Avsluttet ${new Date().toLocaleDateString("nb-NO")}${arsak.trim() ? `: ${arsak.trim()}` : ""}`;
+    try {
+      for (const r of targets) {
+        await updateStatus(r.id, "Avsluttet", {
+          kommentar: [notat, r.kommentar].filter(Boolean).join(" | "),
+          ...(sluttDato ? { avtalt_slutt: sluttDato } : {}),
+        });
+      }
+      setSelectedIds((current) => current.filter((id) => !targets.some((t) => t.id === id)));
+      await refresh();
+      flash(`${targets.length} målepunkt avsluttet`);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      flash(/status_check|check constraint/i.test(msg) ? "Kjør migration-015 i Supabase først" : "Feil: " + msg);
+    }
   }
 
   async function hentTilbakeFraVent() {
@@ -1968,6 +2076,9 @@ export default function StromflytPage() {
       { label: "Status", value: (r) => displayStatus(r.status) },
       { label: "Neste handling", value: (r) => nextStatus(r.status) ? displayStatus(nextStatus(r.status)!) : "Ferdig" },
       { label: "Oppstart", value: (r) => r.avtalt_oppstart || "" },
+      { label: "Avtalt slutt", value: (r) => r.avtalt_slutt || "" },
+      { label: "Innkjøpsleverandør", value: (r) => leverandorAv(r) },
+      { label: "Hovedkontrakt", value: (r) => r.hovedkontrakt || "" },
       { label: "Netteier", value: (r) => r.netteier },
       { label: "Årsforbruk (kWh)", value: (r) => r.aarsforbruk_kwh ?? "" },
       { label: "Overtakelse", value: (r) => r.avtaletype || "" },
@@ -2666,6 +2777,76 @@ export default function StromflytPage() {
               />
             </div>
 
+            <div className="panel levmatrise">
+              <div className="hd">
+                <div>
+                  <h2>Solgt volum per AT-serie og leverandør</h2>
+                  <span className="sub">Bare målere med volumkilde (avtale eller Cloud) teller i GWh. Kladd, På vent og Avsluttet er ikke med. Klikk en celle for å se målerne.</span>
+                </div>
+              </div>
+              <table className="matrise-tabell">
+                <thead>
+                  <tr>
+                    <th>AT-serie</th>
+                    {leverandorMatrise.leverandorer.map((l) => <th key={l} className="num">{l}</th>)}
+                    <th className="num">Sum</th>
+                    <th className="num">Andel</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {AT_SERIER.map((serie) => {
+                    const sum = leverandorMatrise.radSum.get(serie);
+                    const visCelle = (c: { malere: number; medVolum: number; utenVolum: number; prognose: number; gwh: number } | undefined) => {
+                      if (!c || c.malere === 0) return <span className="muted">–</span>;
+                      return (
+                        <>
+                          <b>{c.medVolum > 0 ? `${fmtGwh(c.gwh)} GWh` : "Mangler volum"}</b>
+                          <small>
+                            {c.medVolum} måler{c.medVolum === 1 ? "" : "e"}
+                            {c.utenVolum > 0 && <span className="matrise-flagg"> · {c.utenVolum} uten volum</span>}
+                            {c.prognose > 0 && <span title="Cloud-prognose fra under 12 måneders måling"> · {c.prognose} prognose</span>}
+                          </small>
+                        </>
+                      );
+                    };
+                    return (
+                      <tr key={serie}>
+                        <td>{serie}</td>
+                        {leverandorMatrise.leverandorer.map((l) => {
+                          const c = leverandorMatrise.celler.get(`${serie}|${l}`);
+                          return (
+                            <td key={l} className="num matrise-celle">
+                              {c && c.malere > 0
+                                ? <button type="button" onClick={() => { setFltLeverandor(l); setFltAtSerie(serie); setFltStatus(""); setWorkFilter("solgt"); setTab("reg"); }}>{visCelle(c)}</button>
+                                : visCelle(c)}
+                            </td>
+                          );
+                        })}
+                        <td className="num matrise-celle sum">{visCelle(sum)}</td>
+                        <td className="num">{sum && sum.medVolum > 0 && leverandorMatrise.total.gwh > 0 ? `${Math.round((sum.gwh / leverandorMatrise.total.gwh) * 100)} %` : <span className="muted">–</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td>Sum</td>
+                    {leverandorMatrise.leverandorer.map((l) => {
+                      const c = leverandorMatrise.kolSum.get(l);
+                      return <td key={l} className="num matrise-celle">{c && c.malere > 0 ? <><b>{c.medVolum > 0 ? `${fmtGwh(c.gwh)} GWh` : "Mangler volum"}</b><small>{c.medVolum} måler{c.medVolum === 1 ? "" : "e"}{c.utenVolum > 0 && <span className="matrise-flagg"> · {c.utenVolum} uten volum</span>}</small></> : <span className="muted">–</span>}</td>;
+                    })}
+                    <td className="num matrise-celle sum"><b>{fmtGwh(leverandorMatrise.total.gwh)} GWh</b><small>{leverandorMatrise.total.medVolum} målere{leverandorMatrise.total.utenVolum > 0 && <span className="matrise-flagg"> · {leverandorMatrise.total.utenVolum} uten volum</span>}</small></td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+              {leverandorMatrise.andel300 !== null && leverandorMatrise.andel400 !== null && (
+                <p className="matrise-andel">
+                  Fordeling for målere med AT-kode: <b>AT300x {Math.round(leverandorMatrise.andel300)} %</b> · <b>AT400x {Math.round(leverandorMatrise.andel400)} %</b> (av GWh med volumkilde)
+                </p>
+              )}
+            </div>
+
             <div className="overview-2col">
               <div className="panel livslop">
                 <div className="hd">
@@ -2842,7 +3023,19 @@ export default function StromflytPage() {
               <label className="flt">Status
                 <select value={fltStatus} onChange={(e) => { setFltStatus(e.target.value); setWorkFilter(""); }}>
                   <option value="">alle</option>
-                  {[...STAGES, "På vent" as Status].map((s) => <option key={s} value={s}>{displayStatus(s)}</option>)}
+                  {[...STAGES, "På vent" as Status, "Avsluttet" as Status].map((s) => <option key={s} value={s}>{displayStatus(s)}</option>)}
+                </select>
+              </label>
+              <label className="flt">Leverandør
+                <select value={fltLeverandor} onChange={(e) => setFltLeverandor(e.target.value)}>
+                  <option value="">alle</option>
+                  {leverandorForslag.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </label>
+              <label className="flt">AT-serie
+                <select value={fltAtSerie} onChange={(e) => setFltAtSerie(e.target.value as "" | AtSerie)}>
+                  <option value="">alle</option>
+                  {AT_SERIER.map((a) => <option key={a} value={a}>{a}</option>)}
                 </select>
               </label>
               <label className="flt">Sorter
@@ -2912,6 +3105,9 @@ export default function StromflytPage() {
               <button className="btn sm" disabled={!selectedParkerbare.length} onClick={settPaVent} title="Tar raden ut av løpet uten å slette den - f.eks. målere som likevel ikke skal over til oss">
                 Sett {selectedParkerbare.length || "valgte"} på vent
               </button>
+              <button className="btn sm danger" disabled={!selectedRowsForBulk.some((r) => r.status !== "Avsluttet")} onClick={avsluttValgte} title="Terminert/opphørt hos leverandøren - raden beholdes som historikk, men teller ikke som solgt">
+                Avslutt {selectedRowsForBulk.filter((r) => r.status !== "Avsluttet").length || "valgte"}
+              </button>
               {selectedPaVent.length > 0 && (
                 <button className="btn sm" onClick={hentTilbakeFraVent}>Hent {selectedPaVent.length} tilbake</button>
               )}
@@ -2933,6 +3129,7 @@ export default function StromflytPage() {
                   <th>Kunde</th>
                   <th>Avtaletype</th>
                   {visibleCols.selger && <th>Selger</th>}
+                  {visibleCols.innkjopsleverandor && <th>Leverandør</th>}
                   {visibleCols.bygg && <th>Bygg</th>}
                   {visibleCols.maalepunkt_id && <th>MålepunktID</th>}
                   {visibleCols.netteier && <th>Netteier</th>}
@@ -2955,6 +3152,7 @@ export default function StromflytPage() {
                         <td>{r.kunde}</td>
                         <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>
                         {visibleCols.selger && <td>{r.selger || <span className="muted">Ikke satt</span>}</td>}
+                        {visibleCols.innkjopsleverandor && <td>{leverandorAv(r)}{r.hovedkontrakt && <div className="muted">kontrakt {r.hovedkontrakt}</div>}</td>}
                         {visibleCols.bygg && <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>}
                         {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
                         {visibleCols.netteier && <td>{r.netteier}</td>}
@@ -2965,6 +3163,7 @@ export default function StromflytPage() {
                         {visibleCols.status && (
                           <td>
                             <span className={"pill " + STATUS_CLASS[r.status]}>{displayStatus(r.status)}</span>
+                            {r.status === "Avsluttet" && r.avtalt_slutt && <div className="muted">slutt {r.avtalt_slutt}</div>}
                             {/* Cloud-tilkoblingen (tsdb_id) er en FAKTISK observasjon - måleren
                                 genererer reelle data - men bekrefter IKKE at DENNE avtalen er
                                 meldt inn til Entelios. Skilt tydelig fra selve status-pillen, i
@@ -3328,6 +3527,13 @@ export default function StromflytPage() {
                 <Field label="AT-kode (valgfritt - fylles inn når den er klar)" err={errFor("at_kode")}><input className="num" placeholder="f.eks. AT40001.001" value={form.at_kode ?? ""} onChange={(e) => set("at_kode", e.target.value)} /></Field>
                 <Field label="Avtalt oppstart" req err={errFor("avtalt_oppstart")}><input type="date" className="num" value={form.avtalt_oppstart ?? ""} onChange={(e) => set("avtalt_oppstart", e.target.value)} /></Field>
               </div>
+              <div className="grid2">
+                <Field label="Innkjøpsleverandør (hvem vi kjøper kraften fra)">
+                  <input list="leverandor-liste" value={form.innkjopsleverandor ?? STANDARD_LEVERANDOR} onChange={(e) => set("innkjopsleverandor", e.target.value)} />
+                  <datalist id="leverandor-liste">{leverandorForslag.map((l) => <option key={l} value={l} />)}</datalist>
+                </Field>
+                <Field label="Hovedkontrakt / kundenr hos leverandør (valgfritt)"><input className="num" value={form.hovedkontrakt ?? ""} onChange={(e) => set("hovedkontrakt", e.target.value)} /></Field>
+              </div>
               <Field label="Kommentar"><textarea rows={2} value={form.kommentar ?? ""} onChange={(e) => set("kommentar", e.target.value)} /></Field>
               <div className="field">
                 <label className="checkline"><input type="checkbox" checked={!!form.signert} onChange={(e) => set("signert", e.target.checked)} /> Avtalen er signert i PandaDoc</label>
@@ -3423,6 +3629,8 @@ export default function StromflytPage() {
     </div>
   );
 }
+
+const fmtGwh = (n: number) => n.toLocaleString("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function Tile({ k, v, sub, alert, bar }: { k: string; v: ReactNode; sub?: string; alert?: boolean; bar?: ReactNode }) {
   return (
@@ -3659,6 +3867,19 @@ td .muted{color:var(--sf-ink-3)}
 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .pill.s-kladd{color:var(--sf-ink-2);background:var(--sf-surface-2)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
+.pill.s-avsluttet{color:var(--sf-ink-3);background:var(--sf-surface-2);text-decoration:line-through}
+.levmatrise{margin-bottom:18px}
+.matrise-tabell{width:100%;border-collapse:collapse}
+.matrise-tabell th,.matrise-tabell td{padding:10px 12px;border-bottom:1px solid var(--sf-border);text-align:left}
+.matrise-tabell th.num,.matrise-tabell td.num{text-align:right}
+.matrise-tabell tfoot td{border-top:2px solid var(--sf-border-strong);border-bottom:none;font-weight:600}
+.matrise-celle b{display:block;font-size:15px}
+.matrise-celle small{display:block;font-size:12px;color:var(--sf-ink-3);font-weight:400}
+.matrise-celle button{font:inherit;text-align:right;background:none;border:0;padding:0;cursor:pointer;color:inherit}
+.matrise-celle button:hover b{color:var(--sf-accent);text-decoration:underline}
+.matrise-celle.sum{background:var(--sf-surface-2)}
+.matrise-flagg{color:#8a5a00;font-weight:600}
+.matrise-andel{margin:12px 0 0;font-size:13px;color:var(--sf-ink-2)}
 .forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
 .forbruksgrunnlag{margin-top:18px}
 .grunnlag-summary{cursor:pointer;list-style:none}

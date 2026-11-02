@@ -12,7 +12,10 @@ export type Status =
   // Parkert utenfor løpet: skulle likevel ikke over til oss, eller må vente.
   // Ligger bevisst IKKE i STAGES (indexOf = -1), så alle "status ≥ Sendt
   // Entelios"-tellinger og innmeldingslister ignorerer den automatisk.
-  | "På vent";
+  | "På vent"
+  // Terminert/opphørt hos leverandøren (Entelios-status S/O). Samme prinsipp
+  // som «På vent»: ligger utenfor STAGES og teller ikke som solgt volum.
+  | "Avsluttet";
 
 export const STAGES: Status[] = [
   "Kladd",
@@ -108,8 +111,45 @@ export interface Malepunkt {
   // beste kilde etter velgForbruk() i lib/forbruk-prognose.ts.
   forbruk_cloud_kwh?: number | null;
   forbruk_entelios_kwh?: number | null;
+  // migration-015: hvem vi kjøper kraften fra (Entelios er standard), kundenr/
+  // hovedkontrakt hos dem, og sluttdato når raden er satt til «Avsluttet».
+  innkjopsleverandor?: string | null;
+  hovedkontrakt?: string | null;
+  avtalt_slutt?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export const STANDARD_LEVERANDOR = "Entelios";
+
+// Rader fra før migration-015 har ikke feltet - da er leverandøren Entelios.
+export function leverandorAv(m: Pick<Malepunkt, "innkjopsleverandor">): string {
+  return (m.innkjopsleverandor || "").trim() || STANDARD_LEVERANDOR;
+}
+
+// Ute av porteføljen: parkert eller terminert. Telles ikke som solgt.
+export function erUtenforPortefolje(s: Status): boolean {
+  return s === "På vent" || s === "Avsluttet";
+}
+
+export type AtSerie = "AT300x" | "AT400x" | "Uten AT-kode";
+export const AT_SERIER: AtSerie[] = ["AT300x", "AT400x", "Uten AT-kode"];
+
+// AT300XX = med fakturatjeneste, AT400XX = kun strømsalg. Alt annet (tomt,
+// eller et format vi ikke kjenner) havner i «Uten AT-kode» og flagges - vi
+// gjetter ikke serie ut fra bygg eller kunde.
+export function atSerie(atKode: string | null | undefined): AtSerie {
+  const k = (atKode || "").toUpperCase().replace(/[\s-]/g, "");
+  if (/^AT30\d/.test(k)) return "AT300x";
+  if (/^AT40\d/.test(k)) return "AT400x";
+  return "Uten AT-kode";
+}
+
+// Volum som kan stå i fasit: årsforbruk satt, og ikke bare Entelios sitt
+// anslag («Venta forbruk»). Gyldige kilder er avtalen (lagt inn fra avtalen)
+// og Adaptic Cloud.
+export function harVolumKilde(m: Pick<Malepunkt, "aarsforbruk_kwh" | "forbruk_kilde">): boolean {
+  return !!m.aarsforbruk_kwh && m.forbruk_kilde !== "entelios";
 }
 
 export function nextStatus(s: Status): Status | null {
