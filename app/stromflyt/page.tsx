@@ -670,6 +670,9 @@ export default function StromflytPage() {
     };
   }, [rows]);
 
+  // Sum-kolonnen er bare nyttig når det finnes mer enn én leverandør.
+  const visSum = leverandorMatrise.leverandorer.length > 1;
+
   const leverandorForslag = useMemo(
     () => [...new Set([STANDARD_LEVERANDOR, ...rows.map(leverandorAv)])].sort((a, b) =>
       a === STANDARD_LEVERANDOR ? -1 : b === STANDARD_LEVERANDOR ? 1 : a.localeCompare(b, "nb")),
@@ -2788,9 +2791,9 @@ export default function StromflytPage() {
                 <thead>
                   <tr>
                     <th>AT-serie</th>
-                    {leverandorMatrise.leverandorer.map((l) => <th key={l} className="num">{l}</th>)}
-                    <th className="num">Sum</th>
-                    <th className="num">Andel</th>
+                    {leverandorMatrise.leverandorer.map((l) => <th key={l} className="mat-r">{l}</th>)}
+                    {visSum && <th className="mat-r">Sum</th>}
+                    <th className="mat-r">Andel</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2802,7 +2805,7 @@ export default function StromflytPage() {
                         <>
                           <b>{c.medVolum > 0 ? `${fmtGwh(c.gwh)} GWh` : "Mangler volum"}</b>
                           <small>
-                            {c.medVolum} måler{c.medVolum === 1 ? "" : "e"}
+                            {c.malere} måler{c.malere === 1 ? "" : "e"}
                             {c.utenVolum > 0 && <span className="matrise-flagg"> · {c.utenVolum} uten volum</span>}
                             {c.prognose > 0 && <span title="Cloud-prognose fra under 12 måneders måling"> · {c.prognose} prognose</span>}
                           </small>
@@ -2815,15 +2818,15 @@ export default function StromflytPage() {
                         {leverandorMatrise.leverandorer.map((l) => {
                           const c = leverandorMatrise.celler.get(`${serie}|${l}`);
                           return (
-                            <td key={l} className="num matrise-celle">
+                            <td key={l} className="mat-r matrise-celle">
                               {c && c.malere > 0
                                 ? <button type="button" onClick={() => { setFltLeverandor(l); setFltAtSerie(serie); setFltStatus(""); setWorkFilter("solgt"); setTab("reg"); }}>{visCelle(c)}</button>
                                 : visCelle(c)}
                             </td>
                           );
                         })}
-                        <td className="num matrise-celle sum">{visCelle(sum)}</td>
-                        <td className="num">{sum && sum.medVolum > 0 && leverandorMatrise.total.gwh > 0 ? `${Math.round((sum.gwh / leverandorMatrise.total.gwh) * 100)} %` : <span className="muted">–</span>}</td>
+                        {visSum && <td className="mat-r matrise-celle sum">{visCelle(sum)}</td>}
+                        <td className="mat-r">{sum && sum.medVolum > 0 && leverandorMatrise.total.gwh > 0 ? `${Math.round((sum.gwh / leverandorMatrise.total.gwh) * 100)} %` : <span className="muted">–</span>}</td>
                       </tr>
                     );
                   })}
@@ -2833,9 +2836,9 @@ export default function StromflytPage() {
                     <td>Sum</td>
                     {leverandorMatrise.leverandorer.map((l) => {
                       const c = leverandorMatrise.kolSum.get(l);
-                      return <td key={l} className="num matrise-celle">{c && c.malere > 0 ? <><b>{c.medVolum > 0 ? `${fmtGwh(c.gwh)} GWh` : "Mangler volum"}</b><small>{c.medVolum} måler{c.medVolum === 1 ? "" : "e"}{c.utenVolum > 0 && <span className="matrise-flagg"> · {c.utenVolum} uten volum</span>}</small></> : <span className="muted">–</span>}</td>;
+                      return <td key={l} className="mat-r matrise-celle">{c && c.malere > 0 ? <><b>{c.medVolum > 0 ? `${fmtGwh(c.gwh)} GWh` : "Mangler volum"}</b><small>{c.malere} måler{c.malere === 1 ? "" : "e"}{c.utenVolum > 0 && <span className="matrise-flagg"> · {c.utenVolum} uten volum</span>}</small></> : <span className="muted">–</span>}</td>;
                     })}
-                    <td className="num matrise-celle sum"><b>{fmtGwh(leverandorMatrise.total.gwh)} GWh</b><small>{leverandorMatrise.total.medVolum} målere{leverandorMatrise.total.utenVolum > 0 && <span className="matrise-flagg"> · {leverandorMatrise.total.utenVolum} uten volum</span>}</small></td>
+                    {visSum && <td className="mat-r matrise-celle sum"><b>{fmtGwh(leverandorMatrise.total.gwh)} GWh</b><small>{leverandorMatrise.total.malere} målere{leverandorMatrise.total.utenVolum > 0 && <span className="matrise-flagg"> · {leverandorMatrise.total.utenVolum} uten volum</span>}</small></td>}
                     <td />
                   </tr>
                 </tfoot>
@@ -3869,17 +3872,19 @@ td .muted{color:var(--sf-ink-3)}
 .pill.s-vent{color:#8a5a00;background:#fdf1d6}
 .pill.s-avsluttet{color:var(--sf-ink-3);background:var(--sf-surface-2);text-decoration:line-through}
 .levmatrise{margin-bottom:18px}
-.matrise-tabell{width:100%;border-collapse:collapse}
-.matrise-tabell th,.matrise-tabell td{padding:10px 12px;border-bottom:1px solid var(--sf-border);text-align:left}
-.matrise-tabell th.num,.matrise-tabell td.num{text-align:right}
-.matrise-tabell tfoot td{border-top:2px solid var(--sf-border-strong);border-bottom:none;font-weight:600}
+.matrise-tabell{width:auto;min-width:640px;border-collapse:collapse;font-size:13px;margin:0 0 4px}
+.matrise-tabell th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--sf-ink-3);font-weight:600;text-align:left;padding:8px 18px}
+.matrise-tabell td{padding:10px 18px;border-top:1px solid var(--sf-border);text-align:left}
+.matrise-tabell .mat-r{text-align:right;font-variant-numeric:tabular-nums;min-width:170px}
+.matrise-tabell th.mat-r{text-align:right}
+.matrise-tabell tfoot td{border-top:2px solid var(--sf-border-strong);font-weight:600}
 .matrise-celle b{display:block;font-size:15px}
 .matrise-celle small{display:block;font-size:12px;color:var(--sf-ink-3);font-weight:400}
 .matrise-celle button{font:inherit;text-align:right;background:none;border:0;padding:0;cursor:pointer;color:inherit}
 .matrise-celle button:hover b{color:var(--sf-accent);text-decoration:underline}
 .matrise-celle.sum{background:var(--sf-surface-2)}
 .matrise-flagg{color:#8a5a00;font-weight:600}
-.matrise-andel{margin:12px 0 0;font-size:13px;color:var(--sf-ink-2)}
+.matrise-andel{margin:12px 18px 16px;font-size:13px;color:var(--sf-ink-2)}
 .forbruk-merke{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.5;vertical-align:middle;cursor:help}
 .forbruksgrunnlag{margin-top:18px}
 .grunnlag-summary{cursor:pointer;list-style:none}
