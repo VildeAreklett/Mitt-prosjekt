@@ -206,6 +206,7 @@ const REG_COLUMNS: { key: string; label: string }[] = [
   { key: "selger", label: "Selger" },
   { key: "innkjopsleverandor", label: "Leverandør" },
   { key: "bygg", label: "Bygg" },
+  { key: "at_kode", label: "AT-kode" },
   { key: "maalepunkt_id", label: "MålepunktID" },
   { key: "netteier", label: "Netteier" },
   { key: "prisomrade", label: "Prisområde" },
@@ -3210,6 +3211,7 @@ export default function StromflytPage() {
                   {visibleCols.selger && <th>Selger</th>}
                   {visibleCols.innkjopsleverandor && <th>Leverandør</th>}
                   {visibleCols.bygg && <th>Bygg</th>}
+                  {visibleCols.at_kode && <th>AT-kode</th>}
                   {visibleCols.maalepunkt_id && <th>MålepunktID</th>}
                   {visibleCols.netteier && <th>Netteier</th>}
                   {visibleCols.prisomrade && <th>Prisomr.</th>}
@@ -3233,6 +3235,7 @@ export default function StromflytPage() {
                         {visibleCols.selger && <td>{r.selger || <span className="muted">Ikke satt</span>}</td>}
                         {visibleCols.innkjopsleverandor && <td>{leverandorAv(r)}{r.hovedkontrakt && <div className="muted">Hovedkontrakt: {r.hovedkontrakt}<br />Adaptic har overtatt strømsalget</div>}{r.avtalt_slutt && <div className="muted">Avsluttet {new Date(r.avtalt_slutt).toLocaleDateString("nb-NO")}</div>}</td>}
                         {visibleCols.bygg && <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>}
+                        {visibleCols.at_kode && <td>{r.at_kode?.trim() || <span className="muted">Mangler</span>}</td>}
                         {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
                         {visibleCols.netteier && <td>{r.netteier}</td>}
                         {visibleCols.prisomrade && <td>{r.prisomrade}</td>}
