@@ -327,6 +327,10 @@ export default function StromflytPage() {
   // tatt - ikke noe adresseoppslag kan gi oss den, så den må fylles inn for
   // hånd (f.eks. fra Cloud, etter at "Sjekk i Cloud" er kjørt på raden).
   const [excelRowAarsforbruk, setExcelRowAarsforbruk] = useState<Record<number, string>>({});
+  // Standardverdier for rader der filen ikke oppgir oppstart/prisområde/netteier (f.eks. en liste fra Cloud eller en kunde).
+  const [excelDefOppstart, setExcelDefOppstart] = useState("");
+  const [excelDefPrisomrade, setExcelDefPrisomrade] = useState("");
+  const [excelDefNetteier, setExcelDefNetteier] = useState("");
   const [dragTarget, setDragTarget] = useState<"pdf" | "excel" | "faktura" | null>(null);
   const [authLoading, setAuthLoading] = useState(requireAuth);
   const [userEmail, setUserEmail] = useState<string | null>(requireAuth ? null : "lokal test");
@@ -607,7 +611,7 @@ export default function StromflytPage() {
   const excelReadyCount = useMemo(() => excelSheet?.rows.filter((r) => {
     const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
     return excelSelected[r.source_row] && excelRowValid(r) && !duplicate && excelMappingValid(excelMappings[excelGroupKey(r)]);
-  }).length || 0, [excelSheet, excelSelected, excelMappings, excelRowNetteier, excelRowPrisomrade, excelRowAarsforbruk, rows]);
+  }).length || 0, [excelSheet, excelSelected, excelMappings, excelRowNetteier, excelRowPrisomrade, excelRowAarsforbruk, excelDefOppstart, excelDefPrisomrade, excelDefNetteier, rows]);
 
   const tiles = useMemo(() => {
     const alle = rows.filter((r) => !erUtenforPortefolje(r.status));
@@ -1126,11 +1130,13 @@ export default function StromflytPage() {
   // slå opp nettleverandøren) - samme adresseoppslag (Kartverket + NVE) som
   // fakturaimporten bruker til det samme problemet.
   function excelRowProblemer(r: ParsedExcelRow): string[] {
-    const netteierOk = !!(excelRowNetteier[r.source_row] ?? r.netteier).trim();
-    const prisomradeOk = /^NO[1-5]$/.test((excelRowPrisomrade[r.source_row] ?? r.prisomrade).toUpperCase());
+    const netteierOk = !!((excelRowNetteier[r.source_row] ?? r.netteier).trim() || excelDefNetteier.trim());
+    const prisomradeOk = /^NO[1-5]$/.test(((excelRowPrisomrade[r.source_row] ?? r.prisomrade) || excelDefPrisomrade).toUpperCase());
+    const oppstartOk = !!(r.oppstartdato || excelDefOppstart);
     return r.problemer.filter((p) => {
       if (p === "Mangler netteier") return !netteierOk;
       if (p === "Mangler/ugyldig prisområde") return !prisomradeOk;
+      if (p === "Mangler oppstartsdato") return !oppstartOk;
       return true;
     });
   }
@@ -1267,6 +1273,9 @@ export default function StromflytPage() {
     setExcelRowPrisomrade({});
     setExcelRowLookupMsg({});
     setExcelRowAarsforbruk({});
+    setExcelDefOppstart("");
+    setExcelDefPrisomrade("");
+    setExcelDefNetteier("");
     try {
       const body = new FormData();
       body.append("file", file);
@@ -1321,6 +1330,19 @@ export default function StromflytPage() {
     return !!m && !!m.kunde.trim() && /^\d{9}$/.test(m.org_nr);
   }
 
+  // Velger alle rader som blir gyldige når standardverdiene er satt (og som ikke allerede finnes).
+  function velgRaderMedStandardverdier() {
+    if (!excelSheet) return;
+    setExcelSelected((cur) => {
+      const next = { ...cur };
+      for (const r of excelSheet.rows) {
+        const duplicate = rows.some((existing) => existing.maalepunkt_id === r.maalepunkt_id);
+        if (!duplicate && excelRowProblemer(r).length === 0) next[r.source_row] = true;
+      }
+      return next;
+    });
+  }
+
   async function importExcelRows() {
     if (!excelSheet) return;
     const chosen = excelSheet.rows.filter((r) => {
@@ -1343,10 +1365,10 @@ export default function StromflytPage() {
           adresse: r.adresse,
           maalenummer: r.maalenummer,
           maalepunkt_id: r.maalepunkt_id,
-          netteier: (excelRowNetteier[r.source_row] ?? r.netteier).trim(),
-          prisomrade: (excelRowPrisomrade[r.source_row] ?? r.prisomrade).toUpperCase(),
+          netteier: ((excelRowNetteier[r.source_row] ?? r.netteier).trim() || excelDefNetteier.trim()),
+          prisomrade: ((excelRowPrisomrade[r.source_row] ?? r.prisomrade) || excelDefPrisomrade).toUpperCase(),
           aarsforbruk_kwh: r.aarsforbruk_kwh ?? (/^[0-9]+$/.test((excelRowAarsforbruk[r.source_row] ?? "").trim()) ? Number(excelRowAarsforbruk[r.source_row]) : null),
-          avtalt_oppstart: r.oppstartdato,
+          avtalt_oppstart: r.oppstartdato || excelDefOppstart,
           at_kode: r.referansekode,
           signert: mapping.signert,
           kommentar: [r.kommentar, `Importert fra ${excelName} · ${excelSheet.name} rad ${r.source_row}`].filter(Boolean).join(" · "),
@@ -3517,6 +3539,13 @@ export default function StromflytPage() {
                   </div>
                 </div>
 
+                <div className="toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
+                  <strong>Standardverdier for rader som mangler:</strong>
+                  <label className="muted">Oppstart <input type="date" className="compact-input" value={excelDefOppstart} onChange={(e) => setExcelDefOppstart(e.target.value)} /></label>
+                  <label className="muted">Prisområde <select value={excelDefPrisomrade} onChange={(e) => setExcelDefPrisomrade(e.target.value)}><option value="">-</option>{["NO1", "NO2", "NO3", "NO4", "NO5"].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+                  <label className="muted">Netteier <input className="compact-input" placeholder="f.eks. Elvia AS" value={excelDefNetteier} onChange={(e) => setExcelDefNetteier(e.target.value)} /></label>
+                  <button type="button" className="btn sm" onClick={velgRaderMedStandardverdier} title="Bruker standardverdiene der filen mangler dem, og huker av radene som da er komplette">Velg komplette rader</button>
+                </div>
                 <div className="toolbar">
                   <strong>{excelSheet.rows.length} rader funnet</strong>
                   <span className="muted">Bare gyldige, nye rader med komplett avtaleinformasjon importeres.</span>

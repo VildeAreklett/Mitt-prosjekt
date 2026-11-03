@@ -89,16 +89,16 @@ function fieldFor(header: string): Field | null {
   // "Prosjektnr" (Entelios-innmeldingsmalen sitt AT-nummer-felt, f.eks.
   // "AT30012.040") er samme slags referanse som "Referansekode"/"AT-kode" -
   // begge peker på Adaptic sin interne prosjekt-/avtalereferanse.
-  if (h.includes("referansekode") || h.includes("atkode") || h.includes("prosjektnr")) return "referansekode";
+  if (h.includes("referansekode") || h.includes("atkode") || h.includes("prosjektnr") || h === "atnr" || h === "atnummer") return "referansekode";
   if (h.includes("organisasjonadapticcloud") || h === "cloudorg") return "cloud_org";
   if (h === "orgnr" || h.includes("organisasjonsnummer")) return "org_nr";
   if (h.includes("selskapsnavn")) return "selskapsnavn";
   // "Kunde" alene (uten "selskapsnavn" i teksten) - egen kolonne i en del
   // maler, samme betydning.
-  if (h === "kunde") return "kunde";
+  if (h === "kunde" || h === "kundeavtale" || h === "kundenavn") return "kunde";
   if (h === "bygg") return "bygg";
   if (h === "adresse") return "adresse";
-  if (h === "navn" || h === "kundeinfo") return "navn";
+  if (h === "navn" || h === "kundeinfo" || h.startsWith("malernavn")) return "navn";
   // "Målernr"/"Målernummer" er samme felt som "Målenummer", bare en annen
   // sammensetning av de samme ordene.
   if (h.includes("malenummer") || h.includes("malernummer") || h === "malernr") return "maalenummer";
