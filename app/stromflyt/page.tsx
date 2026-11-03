@@ -427,6 +427,28 @@ export default function StromflytPage() {
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setNyeJobber(null); }
   }
+  // Kunder i registeret som ligner navnet på avtalen: et hint, ikke en kobling.
+  function eksisterendeTreff(a: NyAvtale): { kunde: string; antall: number; kwh: number } | null {
+    const generisk = new Set(["strømavtale", "avtale", "adaptic", "utvidelse", "leietakerfakturering", "strømleveranse", "senter", "fra", "pipedrive", "deal", "og", "cloud", "invoice"]);
+    const ord = `${a.kunde} ${a.avtalenavn}`.toLowerCase().split(/[^a-zæøå0-9]+/).filter((w) => w.length >= 4 && !generisk.has(w));
+    if (!ord.length) return null;
+    const treff = rows.filter((r) => !erUtenforPortefolje(r.status) && ord.some((w) => (r.kunde || "").toLowerCase().includes(w)));
+    if (!treff.length) return null;
+    const navn = treff[0].kunde;
+    return { kunde: navn, antall: treff.length, kwh: treff.reduce((s, r) => s + (r.aarsforbruk_kwh ?? 0), 0) };
+  }
+  async function alleredeLagtInn(a: NyAvtale) {
+    const notat = window.prompt(`Hvor ligger målerne for «${a.avtalenavn}»? (f.eks. «lagt inn via innmeldingsfil 18.09, 123 målere»)`);
+    if (notat === null || !notat.trim()) return;
+    setNyeJobber(a.id);
+    try {
+      await oppdaterNyAvtale(a.id, { kommentar: [`Allerede lagt inn ${new Date().toLocaleDateString("nb-NO")}: ${notat.trim()}`, a.kommentar].filter(Boolean).join(" | ") });
+      await settNyAvtaleStatus(a.id, "Klargjort");
+      await refresh();
+      flash(`«${a.avtalenavn}» merket som lagt inn.`);
+    } catch (e: any) { setErr(e.message ?? String(e)); }
+    finally { setNyeJobber(null); }
+  }
   // Avviser en avtale som ikke skal behandles (ikke signert, feil kunde, duplikat).
   // Årsaken legges først i kommentaren, slik at den står igjen når kortet er flyttet til Ferdig.
   async function avvisNyAvtale(a: NyAvtale) {
@@ -1382,7 +1404,7 @@ export default function StromflytPage() {
             `Importert fra avtale-PDF: ${importName}${parsed.doc_ref ? ` · PandaDoc ${parsed.doc_ref}` : ""}`,
             parsed.kommentar_forslag || "",
           ].filter(Boolean).join(" | "),
-          avtaletype: "",
+          avtaletype: parsed.avtaletype ?? "",
           leverandoravtale_fil_sti: null,
           kontaktperson_navn: "",
           kontaktperson_epost: "",
@@ -2726,6 +2748,11 @@ export default function StromflytPage() {
                                 disabled={ferdig}
                                 onBlur={(e) => { if (e.target.value !== a.kommentar) lagreFelt({ kommentar: e.target.value }); }}
                               />
+                              {!ferdig && (() => {
+                                const t = eksisterendeTreff(a);
+                                if (!t) return null;
+                                return <div className="muted" style={{ fontSize: 12, marginTop: 4 }} title="Treff på kundenavn. Sjekk at det er samme avtale før du kobler.">Mulig allerede i Strømflyt: {t.kunde} · {t.antall} målere · {(t.kwh / 1e6).toFixed(1).replace(".", ",")} GWh</div>;
+                              })()}
                             </div>
                           </td>
                           <td className="num">
@@ -2796,6 +2823,12 @@ export default function StromflytPage() {
                                   {a.pandadoc_url ? "Last opp avtale" : "Bekreft og hent"}
                                   <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
                                 </label>
+                              )}
+                              {!ferdig && (
+                                <button className="btn sm" disabled={nyeJobber === a.id} title="Målerne ligger allerede i registeret (lagt inn på en annen måte)."
+                                  onClick={() => void alleredeLagtInn(a)}>
+                                  Allerede lagt inn
+                                </button>
                               )}
                               {!ferdig && (
                                 <button className="btn sm" disabled={nyeJobber === a.id} title="Fjerner kortet fra køen. Årsaken lagres på avtalen."

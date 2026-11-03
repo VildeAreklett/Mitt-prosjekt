@@ -30,6 +30,8 @@ export interface ParsedAvtale {
   kunde: string | null;
   org_nr: string | null;
   avtalt_oppstart: string | null; // ISO yyyy-mm-dd
+  // «Spotavtale» bare når avtaletittelen er «Strømavtale Adaptic Spot Næring». Ellers null, aldri gjettet.
+  avtaletype: "Spotavtale" | null;
   doc_ref: string | null;
   avtale_signert: boolean;
   rows: ParsedRow[];
@@ -52,6 +54,9 @@ signatursertifikatet på siste side, og kall verktøyet ${TOOL_NAME} med feltene
 - avtalt_oppstart: oppstartsdato for strømleveransen i format YYYY-MM-DD, slik
   den står under overskriften "Oppstart" (f.eks. "Oppstart av strømleveransen
   fra Adaptic Technology AS: 1.5.2026" -> "2026-05-01")
+- avtaletype: "Spotavtale" hvis dokumentets tittel/overskrift er «Strømavtale Adaptic Spot Næring»
+  (kunden går på Adaptics egen spotavtale). I alle andre tilfeller (leietakerfaktureringsavtale,
+  overtakelse av kundens eksisterende avtale, usikker) settes den til null. Ikke gjett.
 - doc_ref: dokumentreferansen (Document Ref / REF. NUMBER), f.eks.
   "EI7UE-NQUNZ-NFDZJ-VJZA3"
 - avtale_signert: true kun hvis signatursertifikatet på siste side viser at
@@ -143,6 +148,7 @@ export async function parseAvtalePdf(bytes: Uint8Array): Promise<ParsedAvtale> {
             kunde: { type: ["string", "null"] },
             org_nr: { type: ["string", "null"] },
             avtalt_oppstart: { type: ["string", "null"] },
+            avtaletype: { type: ["string", "null"], enum: ["Spotavtale", null] },
             doc_ref: { type: ["string", "null"] },
             avtale_signert: { type: "boolean" },
             rows: { type: "array", items: rowSchema },
@@ -197,6 +203,7 @@ export async function parseAvtalePdf(bytes: Uint8Array): Promise<ParsedAvtale> {
     kunde: raw.kunde ? String(raw.kunde).trim() : null,
     org_nr: raw.org_nr ? String(raw.org_nr).replace(/\D/g, "").slice(0, 9) : null,
     avtalt_oppstart: raw.avtalt_oppstart ? String(raw.avtalt_oppstart) : null,
+    avtaletype: raw.avtaletype === "Spotavtale" ? "Spotavtale" : null,
     doc_ref: raw.doc_ref ? String(raw.doc_ref) : null,
     avtale_signert,
     rows,
