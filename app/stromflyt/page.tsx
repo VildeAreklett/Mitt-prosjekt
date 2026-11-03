@@ -3567,6 +3567,10 @@ export default function StromflytPage() {
                 </div>
                 <div className="toolbar">
                   <strong>{excelSheet.rows.length} rader funnet</strong>
+                  {(() => {
+                    const finnes = excelSheet.rows.filter((r) => rows.some((e) => e.maalepunkt_id === r.maalepunkt_id)).length;
+                    return finnes > 0 ? <span className="pill s-kladd" title="MålepunktID finnes allerede i registeret. Disse hoppes over.">{finnes} av {excelSheet.rows.length} finnes allerede i registeret</span> : null;
+                  })()}
                   <span className="muted">Bare gyldige, nye rader med komplett avtaleinformasjon importeres.</span>
                   <span className="grow" />
                   <button className="btn primary" disabled={excelImporting || excelReadyCount === 0} onClick={importExcelRows}>{excelImporting ? "Importerer …" : `Importer ${excelReadyCount} rader`}</button>
