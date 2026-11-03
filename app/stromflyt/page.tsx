@@ -3125,7 +3125,7 @@ export default function StromflytPage() {
                   </>
                 )}
               </div>
-              {(workFilter === "venter" || workFilter === "handling") && (
+              {(
                 <label className="btn" style={{ cursor: "pointer" }} title="Last opp anleggslisten fra Entelios - treff settes til «Registrert hos Entelios»">
                   Avstem mot Entelios-liste
                   <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void avstemMotEntelios(f); }} />
