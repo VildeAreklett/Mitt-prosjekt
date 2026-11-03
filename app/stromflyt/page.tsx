@@ -1832,14 +1832,21 @@ export default function StromflytPage() {
       // Entelios sin statuskolonne: A = aktiv, M = mulig kunde (registrert, venter
       // på oppstart), S = avsluttet/terminert. S skal ALDRI regnes som bekreftet.
       const avsluttet = new Set<string>();
+      // Alt Entelios oppgir per målepunkt: fradato, kontraktslutt og (på arket for
+      // andre hovedkontrakter) hvem som står som hovedkontrakt. Listen er fasit.
+      const info = new Map<string, { status: string; fra: string; slutt: string; hk: string }>();
+      const tilIso = (v: unknown) => (v instanceof Date && !isNaN(v.getTime()) ? v.toISOString().slice(0, 10) : "");
       for (const ws of wb.worksheets) {
-        let col = 0, headerRow = 0, ventaCol = 0, statusCol = 0;
+        let col = 0, headerRow = 0, ventaCol = 0, statusCol = 0, fraCol = 0, sluttCol = 0, hkCol = 0;
         for (let r = 1; r <= Math.min(ws.rowCount, 10) && !col; r++) {
           ws.getRow(r).eachCell((cell, c) => {
             const t = String(cell.value ?? "").trim();
             if (!col && /^(ean|målepunkt\s?-?\s?id|malepunkt\s?-?\s?id|målepunktsid)/i.test(t)) { col = c; headerRow = r; }
             if (!ventaCol && /^(venta|ventet|forventet)\s*forbruk/i.test(t)) ventaCol = c;
             if (!statusCol && /^status$/i.test(t)) statusCol = c;
+            if (!fraCol && /^fradato$/i.test(t)) fraCol = c;
+            if (!sluttCol && /^kontraktslutt$/i.test(t)) sluttCol = c;
+            if (!hkCol && /^hovedkontrakt$/i.test(t)) hkCol = c;
           });
         }
         if (!col) continue;
@@ -1847,6 +1854,13 @@ export default function StromflytPage() {
           const v = String(ws.getRow(r).getCell(col).value ?? "").replace(/\D/g, "");
           if (v.length !== 18) continue;
           const st = statusCol ? String(ws.getRow(r).getCell(statusCol).value ?? "").trim().toUpperCase() : "";
+          const cellVal = (c: number) => (c ? ws.getRow(r).getCell(c).value : null);
+          info.set(v, {
+            status: st,
+            fra: tilIso(cellVal(fraCol)),
+            slutt: tilIso(cellVal(sluttCol)),
+            hk: String(cellVal(hkCol) ?? "").replace(/\s+/g, " ").trim(),
+          });
           if (st === "S" || st === "O") { avsluttet.add(v); continue; }
           ids.add(v);
           if (ventaCol) {
@@ -1869,11 +1883,29 @@ export default function StromflytPage() {
       // Entelios sier S/O: foreslås satt til Avsluttet (bekreftes i samme dialog).
       // Sluttdato settes ikke - den står ikke i listen vi leser.
       const tilAvsluttet = avsluttetIRegister.filter((r) => r.status !== "Avsluttet");
+      // På vent, men Entelios har anlegget som aktivt/mulig kunde: listen vinner.
+      const tilBekreftetFraVent = entRows.filter((r) => r.status === "På vent" && ids.has(r.maalepunkt_id.trim()));
+      // Felt som avviker fra listen: hovedkontrakt, fradato (oppstart) og
+      // kontraktslutt (bare S/O). Hver rad får bare det som faktisk er forskjellig.
+      const feltRettinger: { r: Malepunkt; patch: Partial<Malepunkt>; navn: string[] }[] = [];
+      for (const r of entRows) {
+        const i = info.get(r.maalepunkt_id.trim());
+        if (!i) continue;
+        const patch: Partial<Malepunkt> = {};
+        const navn: string[] = [];
+        if (i.hk && i.hk !== (r.hovedkontrakt ?? "")) { patch.hovedkontrakt = i.hk; navn.push("hovedkontrakt"); }
+        if (i.fra && i.fra !== (r.avtalt_oppstart ?? "").slice(0, 10)) { patch.avtalt_oppstart = i.fra; navn.push("oppstart"); }
+        if ((i.status === "S" || i.status === "O") && i.slutt && i.slutt !== (r.avtalt_slutt ?? "").slice(0, 10)) { patch.avtalt_slutt = i.slutt; navn.push("sluttdato"); }
+        if (navn.length) feltRettinger.push({ r, patch, navn });
+      }
+      const antall = (n: string) => feltRettinger.filter((f) => f.navn.includes(n)).length;
       const sammendrag =
         `${file.name}: ${ids.size} målepunkt på Entelios-listen${avsluttet.size ? ` (+ ${avsluttet.size} avsluttet/terminert, ${avsluttetIRegister.length} av dem i Strømflyt - IKKE bekreftet, sjekk dem)` : ""}.\n\n` +
         `• ${tilBekreftet.length} settes til «Registrert hos Entelios»\n` +
         `• ${ikkeIRegister.length} står på listen men finnes ikke i Strømflyt\n` +
         `• ${bekreftetUtenListe.length} står som registrert hos oss men mangler på listen (ingen endring)\n` +
+        (tilBekreftetFraVent.length ? `• ${tilBekreftetFraVent.length} står «På vent» hos oss men er aktive hos Entelios, settes til «Registrert hos Entelios»: ${tilBekreftetFraVent.slice(0, 8).map((r) => r.bygg).join(", ")}\n` : "") +
+        (feltRettinger.length ? `• ${feltRettinger.length} rader rettes etter listen: ${antall("hovedkontrakt")} hovedkontrakt, ${antall("oppstart")} oppstartsdato, ${antall("sluttdato")} sluttdato\n` : "") +
         (tilAvsluttet.length ? `• ${tilAvsluttet.length} settes til «Avsluttet» (S/O hos Entelios): ${tilAvsluttet.slice(0, 8).map((r) => r.bygg).join(", ")}${tilAvsluttet.length > 8 ? " …" : ""}\n` : "") +
         `\nFortsette?`;
       // Forventet forbruk fra Entelios: lagres som alternativ på raden, og blir
@@ -1898,12 +1930,19 @@ export default function StromflytPage() {
         forbrukOppdateringer.push({ r, patch });
       }
       const sammendrag2 = sammendrag.replace("\n\nFortsette?", `\n• ${forbrukOppdateringer.length} får forventet årsforbruk fra Entelios lagret\n\nFortsette?`);
-      if (!tilBekreftet.length && !forbrukOppdateringer.length && !tilAvsluttet.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
+      if (!tilBekreftet.length && !forbrukOppdateringer.length && !tilAvsluttet.length && !tilBekreftetFraVent.length && !feltRettinger.length) { window.alert(sammendrag.replace("\n\nFortsette?", "\n\nIngenting å endre.")); return; }
       if (!window.confirm(sammendrag2)) return;
       if (tilBekreftet.length) await updateStatuses(tilBekreftet.map((r) => r.id), "Bekreftet");
+      if (tilBekreftetFraVent.length) {
+        const notat = `Satt til registrert ${new Date().toLocaleDateString("nb-NO")}: aktiv hos Entelios i ${file.name}`;
+        for (const r of tilBekreftetFraVent) await updateStatus(r.id, "Bekreftet", { kommentar: [notat, r.kommentar].filter(Boolean).join(" | ") });
+      }
       if (tilAvsluttet.length) {
         const notat = `Avsluttet ${new Date().toLocaleDateString("nb-NO")}: status S/O i Entelios-listen (${file.name})`;
         for (const r of tilAvsluttet) await updateStatus(r.id, "Avsluttet", { kommentar: [notat, r.kommentar].filter(Boolean).join(" | ") });
+      }
+      for (let i = 0; i < feltRettinger.length; i += 6) {
+        await Promise.all(feltRettinger.slice(i, i + 6).map(({ r, patch }) => updateMalepunktDetails(r.id, patch).catch(() => undefined)));
       }
       for (let i = 0; i < forbrukOppdateringer.length; i += 6) {
         await Promise.all(forbrukOppdateringer.slice(i, i + 6).map(({ r, patch }) => updateMalepunktDetails(r.id, patch).catch(() => undefined)));
@@ -3182,7 +3221,7 @@ export default function StromflytPage() {
                         <td>{r.kunde}</td>
                         <td>{r.avtaletype || <span className="muted">Ikke satt</span>}</td>
                         {visibleCols.selger && <td>{r.selger || <span className="muted">Ikke satt</span>}</td>}
-                        {visibleCols.innkjopsleverandor && <td>{leverandorAv(r)}{r.hovedkontrakt && <div className="muted">kontrakt {r.hovedkontrakt}</div>}</td>}
+                        {visibleCols.innkjopsleverandor && <td>{leverandorAv(r)}{r.hovedkontrakt && <div className="muted">Hovedkontrakt: {r.hovedkontrakt}<br />Adaptic har overtatt strømsalget</div>}{r.avtalt_slutt && <div className="muted">Avsluttet {new Date(r.avtalt_slutt).toLocaleDateString("nb-NO")}</div>}</td>}
                         {visibleCols.bygg && <td>{r.bygg}{r.adresse && r.adresse.split(",")[0].trim() !== (r.bygg || "").trim() && <div className="muted">{r.adresse}</div>}</td>}
                         {visibleCols.maalepunkt_id && <td className="num">{r.maalepunkt_id}</td>}
                         {visibleCols.netteier && <td>{r.netteier}</td>}
