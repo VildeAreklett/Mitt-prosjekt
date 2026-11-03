@@ -3797,15 +3797,15 @@ const CSS = `
 .sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
 .sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe4ec;border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
 .sidenav button.active .sidenav-tall{background:var(--sf-accent);color:var(--sf-accent-ink)}
-.sidenav-prikk{width:8px;height:8px;border-radius:50%;flex:none;margin:0 4px 0 4px;background:#93a5ba}
-.sidenav-prikk.ko-handling{background:#f0b44c}
-.sidenav-prikk.ko-venter{background:#5aa7e8}
-.sidenav-prikk.ko-klar-cloud{background:#4cc3a1}
-.sidenav-prikk.ko-cloud{background:#6fd0e0}
-.sidenav-prikk.ko-drift{background:#5fd07a}
-.sidenav-prikk.ko-pa-vent{background:#8e9bab}
-.sidenav-prikk.ko-avsluttet{background:#5b6675}
-.sidenav button.active .sidenav-prikk{box-shadow:0 0 0 3px rgba(255,255,255,.12)}
+.sidenav button span.sidenav-prikk{width:8px;height:8px;min-width:8px;max-width:8px;border-radius:50%;flex:none;margin:0 4px;background:#93a5ba}
+.sidenav button span.sidenav-prikk.ko-handling{background:#f0b44c}
+.sidenav button span.sidenav-prikk.ko-venter{background:#5aa7e8}
+.sidenav button span.sidenav-prikk.ko-klar-cloud{background:#4cc3a1}
+.sidenav button span.sidenav-prikk.ko-cloud{background:#6fd0e0}
+.sidenav button span.sidenav-prikk.ko-drift{background:#5fd07a}
+.sidenav button span.sidenav-prikk.ko-pa-vent{background:#8e9bab}
+.sidenav button span.sidenav-prikk.ko-avsluttet{background:#5b6675}
+.sidenav button.active span.sidenav-prikk{box-shadow:0 0 0 3px rgba(255,255,255,.12)}
 .sidenav-tall.null{background:transparent;color:#6f8196;font-weight:600}
 .sidenav button.active .sidenav-tall.null{background:transparent;color:var(--sf-accent)}
 .sidenav-tall.varsel{background:var(--sf-warn-soft);color:var(--sf-warn)}
