@@ -427,6 +427,21 @@ export default function StromflytPage() {
     catch (e: any) { setErr(e.message ?? String(e)); }
     finally { setNyeJobber(null); }
   }
+  // Avviser en avtale som ikke skal behandles (ikke signert, feil kunde, duplikat).
+  // Årsaken legges først i kommentaren, slik at den står igjen når kortet er flyttet til Ferdig.
+  async function avvisNyAvtale(a: NyAvtale) {
+    const arsak = window.prompt(`Hvorfor avvises «${a.avtalenavn}»? (f.eks. «ikke signert i Pandadoc», «allerede lagt inn», «feil kunde»)`);
+    if (arsak === null) return;
+    setNyeJobber(a.id);
+    try {
+      const notat = `Avvist ${new Date().toLocaleDateString("nb-NO")}${arsak.trim() ? `: ${arsak.trim()}` : ""}`;
+      await oppdaterNyAvtale(a.id, { kommentar: [notat, a.kommentar].filter(Boolean).join(" | ") });
+      await settNyAvtaleStatus(a.id, "Avvist");
+      await refresh();
+      flash(`«${a.avtalenavn}» avvist.`);
+    } catch (e: any) { setErr(e.message ?? String(e)); }
+    finally { setNyeJobber(null); }
+  }
   // `detalj` er valgfri - gir et to-linjers kort (fet tittel + dempet
   // detaljlinje, f.eks. "Systemene svarer" / "Cloud-sjekk 08:42") i stedet
   // for den vanlige ett-linjes bekreftelsen. Brukt for lengre kjørende
@@ -2781,6 +2796,18 @@ export default function StromflytPage() {
                                   {a.pandadoc_url ? "Last opp avtale" : "Bekreft og hent"}
                                   <input type="file" accept="application/pdf" onChange={(e) => { slippFil(e.target.files?.[0]); e.target.value = ""; }} />
                                 </label>
+                              )}
+                              {!ferdig && (
+                                <button className="btn sm" disabled={nyeJobber === a.id} title="Fjerner kortet fra køen. Årsaken lagres på avtalen."
+                                  onClick={() => void avvisNyAvtale(a)}>
+                                  Avvis
+                                </button>
+                              )}
+                              {ferdig && (
+                                <button className="btn sm" disabled={nyeJobber === a.id} title="Flytter avtalen tilbake til «Krever handling»"
+                                  onClick={() => settNyStatus(a, "Ny")}>
+                                  Gjenåpne
+                                </button>
                               )}
                               {a.status === "Ny" && (
                                 <button className="btn sm" disabled={nyeJobber === a.id}
