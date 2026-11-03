@@ -225,8 +225,10 @@ export async function listNyeAvtaler(): Promise<NyAvtale[]> {
 }
 
 export async function settNyAvtaleStatus(id: string, status: NyAvtale["status"]): Promise<void> {
-  const { error } = await supabase.from("stromavtaler_inn").update({ status }).eq("id", id);
+  const { data, error } = await supabase.from("stromavtaler_inn").update({ status }).eq("id", id).select("id");
   if (error) throw error;
+  // RLS avviser en oppdatering uten feilmelding: da kommer 0 rader tilbake.
+  if (!data?.length) throw new Error("Endringen ble ikke lagret (mangler skrivetilgang). Kjør migration-016 i Supabase.");
 }
 
 // Fakturakontroll fyller ut det den vet - kunde, avtalenavn, beløp - men det
@@ -236,6 +238,7 @@ export async function oppdaterNyAvtale(
   id: string,
   patch: Partial<Pick<NyAvtale, "kunde" | "avtalenavn" | "belop" | "at_nummer" | "kommentar" | "pandadoc_url" | "signert_dato">>,
 ): Promise<void> {
-  const { error } = await supabase.from("stromavtaler_inn").update(patch).eq("id", id);
+  const { data, error } = await supabase.from("stromavtaler_inn").update(patch).eq("id", id).select("id");
   if (error) throw error;
+  if (!data?.length) throw new Error("Endringen ble ikke lagret (mangler skrivetilgang). Kjør migration-016 i Supabase.");
 }
