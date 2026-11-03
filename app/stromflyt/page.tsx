@@ -189,7 +189,7 @@ const WORK_FILTERS: { key: WorkFilter; label: string; statuses: Status[]; skjult
   // Elgsetergate 16, der to rader IKKE dukket opp her fordi de allerede
   // hadde rukket videre til "Satt opp i Cloud", noe som så ut som de
   // manglet fra registreringen selv om de faktisk var bekreftet for lengst.
-  { key: "klar-cloud", label: "Registrert Entelios", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"] },
+  { key: "klar-cloud", label: "Registrert hos Entelios", statuses: ["Bekreftet", "Satt opp i Cloud", "Aktiv"] },
   { key: "cloud", label: "Cloud-oppsett", statuses: ["Satt opp i Cloud"] },
   { key: "drift", label: "I drift", statuses: ["Aktiv"] },
   // Parkert: skulle likevel ikke over til oss, eller må vente. Ikke en
@@ -1817,6 +1817,21 @@ export default function StromflytPage() {
     }
   }
 
+  // Én statuskø i sidemenyen: prikk i køens farge, navn og antall (0 vises dempet).
+  const renderKo = (key: WorkFilter) => {
+    const f = WORK_FILTERS.find((w) => w.key === key);
+    if (!f) return null;
+    const count = rows.filter((r) => f.statuses.includes(r.status)).length;
+    const active = tab === "reg" && workFilter === f.key;
+    return (
+      <button key={f.key} className={active ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(f.key); setFltStatus(""); }}>
+        <span className={`sidenav-prikk ko-${f.key}`} aria-hidden="true" />
+        <span>{f.label}</span>
+        <span className={`sidenav-tall${f.key === "handling" && count > 0 ? " varsel" : ""}${count === 0 ? " null" : ""}`}>{count}</span>
+      </button>
+    );
+  };
+
   // Entelios har ingen integrasjon - bekreftelsen kommer som en Excel-liste
   // (anleggsliste/målepunktsliste) på mail. Les MålepunktID-ene fra den og flytt
   // alle treff som ikke er bekreftet ennå til "Bekreftet" i ett steg, i stedet
@@ -2532,7 +2547,7 @@ export default function StromflytPage() {
 
         <div className="app-body">
           <nav className="sidenav" aria-label="Hovedmeny">
-            <div className="sidenav-merke">ARBEIDSFLATE</div>
+            <div className="sidenav-merke">OVERSIKT</div>
             <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
               <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></svg>
               <span>Oversikt</span>
@@ -2541,6 +2556,7 @@ export default function StromflytPage() {
               <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
               <span>Arbeidsliste</span>
             </button>
+            <div className="sidenav-merke">INNMELDING</div>
             {/* Nye avtaler kommer automatisk fra fakturakontroll når en ren
                 strømleveranse blir signert. De har ingen målepunkter ennå, og
                 står derfor foran resten av løpet. */}
@@ -2567,17 +2583,11 @@ export default function StromflytPage() {
               <svg className="sidenav-ikon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg>
               <span>Registrering</span>
             </button>
-            <div className="sidenav-merke">STATUSKØER</div>
-            {WORK_FILTERS.filter((f) => f.key && !f.skjult).map((f) => {
-              const count = rows.filter((r) => f.statuses.includes(r.status)).length;
-              const active = tab === "reg" && workFilter === f.key;
-              return (
-                <button key={f.key} className={active ? "active" : ""} onClick={() => { setTab("reg"); setWorkFilter(f.key); setFltStatus(""); }}>
-                  <span>{f.label}</span>
-                  {count > 0 && <span className={`sidenav-tall${f.key === "handling" ? " varsel" : ""}`}>{count}</span>}
-                </button>
-              );
-            })}
+            {(["handling", "venter"] as WorkFilter[]).map(renderKo)}
+            <div className="sidenav-merke">OPPSETT OG DRIFT</div>
+            {(["klar-cloud", "cloud", "drift"] as WorkFilter[]).map(renderKo)}
+            <div className="sidenav-merke">UTENFOR LØPET</div>
+            {(["pa-vent", "avsluttet"] as WorkFilter[]).map(renderKo)}
             <div className="sidenav-fot">
               <span className="sidenav-status-dot" aria-hidden="true" />
               <span>{loading ? "Henter register …" : sistOppdatert ? `Oppdatert ${sistOppdatert.toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" })}` : "Ikke oppdatert ennå"}</span>
@@ -3787,6 +3797,17 @@ const CSS = `
 .sidenav button.active{background:var(--sf-accent-soft);color:var(--sf-accent);font-weight:680}
 .sidenav-tall{margin-left:auto;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.12);color:#dbe4ec;border-radius:999px;padding:1px 7px;min-width:22px;text-align:center}
 .sidenav button.active .sidenav-tall{background:var(--sf-accent);color:var(--sf-accent-ink)}
+.sidenav-prikk{width:8px;height:8px;border-radius:50%;flex:none;margin:0 4px 0 4px;background:#93a5ba}
+.sidenav-prikk.ko-handling{background:#f0b44c}
+.sidenav-prikk.ko-venter{background:#5aa7e8}
+.sidenav-prikk.ko-klar-cloud{background:#4cc3a1}
+.sidenav-prikk.ko-cloud{background:#6fd0e0}
+.sidenav-prikk.ko-drift{background:#5fd07a}
+.sidenav-prikk.ko-pa-vent{background:#8e9bab}
+.sidenav-prikk.ko-avsluttet{background:#5b6675}
+.sidenav button.active .sidenav-prikk{box-shadow:0 0 0 3px rgba(255,255,255,.12)}
+.sidenav-tall.null{background:transparent;color:#6f8196;font-weight:600}
+.sidenav button.active .sidenav-tall.null{background:transparent;color:var(--sf-accent)}
 .sidenav-tall.varsel{background:var(--sf-warn-soft);color:var(--sf-warn)}
 .sidenav-fot{margin-top:auto;display:flex;align-items:center;gap:8px;color:#93a5ba;font-size:11.5px;font-weight:550;padding:12px 10px;border-top:1px solid rgba(255,255,255,.1)}
 .sidenav-status-dot{width:7px;height:7px;border-radius:50%;background:var(--sf-good);flex:none;animation:toast-puls 1.8s ease-in-out infinite}
