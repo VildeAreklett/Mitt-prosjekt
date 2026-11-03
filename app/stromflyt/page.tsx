@@ -1385,7 +1385,26 @@ export default function StromflytPage() {
     }
     setExcelImporting(false);
     await refresh();
-    if (ok) { setTab("reg"); flash(`${ok} Excel-rader importert${failed ? `, ${failed} feilet` : ""}`); }
+    if (ok) {
+      setTab("reg");
+      flash(`${ok} Excel-rader importert${failed ? `, ${failed} feilet` : ""}`);
+      // Åpne kort i «Signerte avtaler» som ligner det som ble importert: spør før de merkes som klargjort.
+      const importert = chosen.map((r) => {
+        const m = excelMappings[excelGroupKey(r)];
+        return `${m?.kunde ?? ""} ${m?.cloud_org ?? ""}`;
+      }).join(" ").toLowerCase() + " " + excelName.toLowerCase();
+      const generisk = new Set(["strømavtale", "avtale", "adaptic", "utvidelse", "leietakerfakturering", "strømleveranse", "senter", "fra", "pipedrive", "deal", "og", "cloud", "invoice", "målepunkter", "entelios"]);
+      for (const a of nyeAvtaler.filter((x) => x.status === "Ny" || x.status === "Under arbeid")) {
+        const ord = `${a.kunde} ${a.avtalenavn}`.toLowerCase().split(/[^a-zæøå0-9]+/).filter((w) => w.length >= 4 && !generisk.has(w));
+        if (!ord.some((w) => importert.includes(w))) continue;
+        if (!window.confirm(`Importen ser ut til å høre til avtalen «${a.avtalenavn}». Merke den som klargjort (lagt inn)?`)) continue;
+        try {
+          await oppdaterNyAvtale(a.id, { kommentar: [`Klargjort ${new Date().toLocaleDateString("nb-NO")}: ${ok} målere lagt inn via Excel-import (${excelName})`, a.kommentar].filter(Boolean).join(" | ") });
+          await settNyAvtaleStatus(a.id, "Klargjort");
+        } catch (e: any) { flash("Kunne ikke oppdatere avtalekortet: " + (e.message ?? e)); }
+      }
+      await refresh();
+    }
     else flash("Ingen rader ble importert");
   }
 
